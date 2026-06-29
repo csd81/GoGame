@@ -3,7 +3,7 @@
  * Each bot implements selectMove(state, botColor).
  * Pure functions — no side effects beyond Math.random().
  */
-import { EMPTY, BLACK, WHITE, isStarPoint } from "./engine.ts"
+import { EMPTY, BLACK, WHITE, isStarPoint, copyState, getLegalMoves, placeStone, pass, countScore } from "./engine.ts"
 import type { GameState, Cell, MoveResult } from "./engine.ts"
 
 export interface Bot {
@@ -363,6 +363,164 @@ export function createHeuristicBot2Ply(): Bot {
       }
 
       return { r: bestMove[0], c: bestMove[1] }
+    }
+  }
+}
+
+// ============================================================
+// Level 4 — MCTS Bot (Monte Carlo Tree Search)
+// ============================================================
+
+const UCB_C = 1.4
+
+interface MCTSNode {
+  r: number
+  c: number
+  parent: MCTSNode | null
+  children: MCTSNode[]
+  visits: number
+  wins: number
+  untriedMoves: [number, number][]
+  playerJustMoved: Cell
+}
+
+function ucb1(node: MCTSNode, parentVisits: number): number {
+  if (node.visits === 0) return Infinity
+  return node.wins / node.visits + UCB_C * Math.sqrt(Math.log(parentVisits) / node.visits)
+}
+
+function selectChild(node: MCTSNode): MCTSNode {
+  let best = node.children[0]!
+  let bestScore = ucb1(best, node.visits)
+  for (let i = 1; i < node.children.length; i++) {
+    const score = ucb1(node.children[i]!, node.visits)
+    if (score > bestScore) {
+      bestScore = score
+      best = node.children[i]!
+    }
+  }
+  return best
+}
+
+function expand(node: MCTSNode, simState: GameState): MCTSNode {
+  const [r, c] = node.untriedMoves.pop()!
+  if (r === -1 && c === -1) {
+    pass(simState)
+  } else {
+    placeStone(simState, r, c)
+  }
+  const child: MCTSNode = {
+    r, c,
+    parent: node,
+    children: [],
+    visits: 0,
+    wins: 0,
+    untriedMoves: simState.gameOver ? [] : getLegalMoves(simState, simState.currentPlayer),
+    playerJustMoved: simState.currentPlayer === BLACK ? WHITE : BLACK,
+  }
+  node.children.push(child)
+  return child
+}
+
+function rollout(state: GameState): Cell | null {
+  const sim = copyState(state)
+  for (let i = 0; i < 500; i++) {
+    if (sim.gameOver) break
+    const moves = getLegalMoves(sim, sim.currentPlayer)
+    if (moves.length === 0) {
+      pass(sim)
+      continue
+    }
+    const [r, c] = moves[Math.floor(Math.random() * moves.length)]!
+    placeStone(sim, r, c)
+    if (sim.consecutivePasses >= 2) sim.gameOver = true
+  }
+  const score = countScore(sim)
+  if (score.blackScore > score.whiteScore) return BLACK
+  if (score.whiteScore > score.blackScore) return WHITE
+  return null
+}
+
+function backpropagate(node: MCTSNode, winner: Cell | null): void {
+  while (node) {
+    node.visits++
+    if (winner !== null && node.playerJustMoved === winner) {
+      node.wins++
+    }
+    node = node.parent!
+  }
+}
+
+function bestChild(node: MCTSNode): MCTSNode {
+  let best = node.children[0]!
+  for (let i = 1; i < node.children.length; i++) {
+    if (node.children[i]!.visits > best.visits) {
+      best = node.children[i]!
+    }
+  }
+  return best
+}
+
+function getMCTSBudget(size: number): { maxIterations: number; maxTimeMs: number } {
+  if (size <= 9) return { maxIterations: 2000, maxTimeMs: 1500 }
+  if (size <= 13) return { maxIterations: 800, maxTimeMs: 2500 }
+  return { maxIterations: 200, maxTimeMs: 4000 }
+}
+
+export function createMCTSBot(budgetOverride?: { maxIterations: number; maxTimeMs: number }): Bot {
+  return {
+    name: "MCTS",
+    selectMove(state: GameState, botColor: typeof BLACK | typeof WHITE): { r: number; c: number } | null {
+      const moves = getLegalMoves(state, botColor)
+      if (moves.length === 0) return null
+      if (moves.length === 1) return { r: moves[0][0], c: moves[0][1] }
+
+      const root: MCTSNode = {
+        r: -2, c: -2,
+        parent: null,
+        children: [],
+        visits: 0,
+        wins: 0,
+        untriedMoves: moves,
+        playerJustMoved: botColor,
+      }
+
+      const budget = budgetOverride ?? getMCTSBudget(state.size)
+      const startTime = performance.now()
+      let iterations = 0
+
+      while (iterations < budget.maxIterations) {
+        const elapsed = performance.now() - startTime
+        if (elapsed >= budget.maxTimeMs) break
+
+        let node: MCTSNode = root
+        const simState = copyState(state)
+
+        // Selection — traverse tree until a leaf
+        while (node.untriedMoves.length === 0 && node.children.length > 0 && !simState.gameOver) {
+          node = selectChild(node)
+          if (node.r === -1 && node.c === -1) {
+            pass(simState)
+          } else {
+            placeStone(simState, node.r, node.c)
+          }
+        }
+
+        // Expansion — add one child if there are untried moves
+        if (node.untriedMoves.length > 0 && !simState.gameOver) {
+          node = expand(node, simState)
+        }
+
+        // Simulation — random playout
+        const winner = rollout(simState)
+
+        // Backpropagation
+        backpropagate(node, winner)
+        iterations++
+      }
+
+      const best = bestChild(root)
+      return { r: best.r, c: best.c }
     }
   }
 }

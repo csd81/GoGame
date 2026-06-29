@@ -8,7 +8,7 @@ import {
   isValidMoveForColor,
 } from "../engine.ts"
 import type { GameState, Cell } from "../engine.ts"
-import { setBotDeps, createRandomBot, createGreedyBot, createHeuristicBot } from "../bots.ts"
+import { setBotDeps, createRandomBot, createGreedyBot, createHeuristicBot, createMCTSBot } from "../bots.ts"
 import type { Bot } from "../bots.ts"
 
 setBotDeps(getNeighbors, findGroup, countLiberties, isValidMoveForColor)
@@ -26,6 +26,7 @@ const BOT_FACTORIES: Record<number, () => Bot> = {
   1: createRandomBot,
   2: createGreedyBot,
   3: createHeuristicBot,
+  4: createMCTSBot,
 }
 
 const S: AppState = {
@@ -298,6 +299,7 @@ export function setupTestDOM(): void {
     '      <option value="1">1 Random</option>',
     '      <option value="2">2 Greedy</option>',
     '      <option value="3">3 Heuristic</option>',
+    '      <option value="4">4 MCTS</option>',
     '    </select>',
     '  </div>',
     '  <div class="control-group">',

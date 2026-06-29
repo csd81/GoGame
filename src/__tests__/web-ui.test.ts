@@ -58,9 +58,9 @@ describe("DOM setup", () => {
     expect($sizeSelect.value).toBe("9")
   })
 
-  it("creates level select with 3 options", () => {
+  it("creates level select with 4 options", () => {
     expect($levelSelect).not.toBeNull()
-    expect($levelSelect.options.length).toBe(3)
+    expect($levelSelect.options.length).toBe(4)
     expect($levelSelect.value).toBe("3")
   })
 

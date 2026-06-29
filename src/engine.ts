@@ -186,6 +186,32 @@ export function createInitialState(size: number = 19): GameState {
   }
 }
 
+export function copyState(state: GameState): GameState {
+  return {
+    size: state.size,
+    board: cloneBoard(state.board),
+    currentPlayer: state.currentPlayer,
+    captures: { [BLACK]: state.captures[BLACK], [WHITE]: state.captures[WHITE] },
+    history: [...state.history],
+    consecutivePasses: state.consecutivePasses,
+    gameOver: state.gameOver,
+    moveCount: state.moveCount,
+    lastMove: state.lastMove ? { r: state.lastMove.r, c: state.lastMove.c } : null,
+  }
+}
+
+export function getLegalMoves(state: GameState, color: Cell): [number, number][] {
+  const moves: [number, number][] = []
+  for (let r = 0; r < state.size; r++) {
+    for (let c = 0; c < state.size; c++) {
+      if (state.board[r][c] !== EMPTY) continue
+      const result = isValidMoveForColor(state, r, c, color)
+      if (result.valid) moves.push([r, c])
+    }
+  }
+  return moves
+}
+
 export function countScore(state: GameState): { blackScore: number; whiteScore: number } {
   const { board, size, captures } = state
   const territory: Record<number, number> = { [BLACK]: 0, [WHITE]: 0 }

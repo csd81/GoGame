@@ -152,6 +152,19 @@ function createInitialState(size = 19) {
     lastMove: null
   };
 }
+function copyState(state) {
+  return {
+    size: state.size,
+    board: cloneBoard(state.board),
+    currentPlayer: state.currentPlayer,
+    captures: { [BLACK]: state.captures[BLACK], [WHITE]: state.captures[WHITE] },
+    history: [...state.history],
+    consecutivePasses: state.consecutivePasses,
+    gameOver: state.gameOver,
+    moveCount: state.moveCount,
+    lastMove: state.lastMove ? { r: state.lastMove.r, c: state.lastMove.c } : null
+  };
+}
 function countScore(state) {
   const { board, size, captures } = state;
   const territory = { [BLACK]: 0, [WHITE]: 0 };
@@ -443,13 +456,147 @@ function createHeuristicBot() {
     }
   };
 }
+var UCB_C = 1.4;
+function ucb1(node, parentVisits) {
+  if (node.visits === 0)
+    return Infinity;
+  return node.wins / node.visits + UCB_C * Math.sqrt(Math.log(parentVisits) / node.visits);
+}
+function selectChild(node) {
+  let best = node.children[0];
+  let bestScore = ucb1(best, node.visits);
+  for (let i = 1;i < node.children.length; i++) {
+    const score = ucb1(node.children[i], node.visits);
+    if (score > bestScore) {
+      bestScore = score;
+      best = node.children[i];
+    }
+  }
+  return best;
+}
+function expand(node, simState) {
+  const [r, c] = node.untriedMoves.pop();
+  if (r === -1 && c === -1) {
+    pass(simState);
+  } else {
+    placeStone(simState, r, c);
+  }
+  const child = {
+    r,
+    c,
+    parent: node,
+    children: [],
+    visits: 0,
+    wins: 0,
+    untriedMoves: simState.gameOver ? [] : getLegalMoves(simState, simState.currentPlayer),
+    playerJustMoved: simState.currentPlayer === BLACK ? WHITE : BLACK
+  };
+  node.children.push(child);
+  return child;
+}
+function rollout(state) {
+  const sim = copyState(state);
+  for (let i = 0;i < 500; i++) {
+    if (sim.gameOver)
+      break;
+    const moves = getLegalMoves(sim, sim.currentPlayer);
+    if (moves.length === 0) {
+      pass(sim);
+      continue;
+    }
+    const [r, c] = moves[Math.floor(Math.random() * moves.length)];
+    placeStone(sim, r, c);
+    if (sim.consecutivePasses >= 2)
+      sim.gameOver = true;
+  }
+  const score = countScore(sim);
+  if (score.blackScore > score.whiteScore)
+    return BLACK;
+  if (score.whiteScore > score.blackScore)
+    return WHITE;
+  return null;
+}
+function backpropagate(node, winner) {
+  while (node) {
+    node.visits++;
+    if (winner !== null && node.playerJustMoved === winner) {
+      node.wins++;
+    }
+    node = node.parent;
+  }
+}
+function bestChild(node) {
+  let best = node.children[0];
+  for (let i = 1;i < node.children.length; i++) {
+    if (node.children[i].visits > best.visits) {
+      best = node.children[i];
+    }
+  }
+  return best;
+}
+function getMCTSBudget(size) {
+  if (size <= 9)
+    return { maxIterations: 2000, maxTimeMs: 1500 };
+  if (size <= 13)
+    return { maxIterations: 800, maxTimeMs: 2500 };
+  return { maxIterations: 200, maxTimeMs: 4000 };
+}
+function createMCTSBot(budgetOverride) {
+  return {
+    name: "MCTS",
+    selectMove(state, botColor) {
+      const moves = getLegalMoves(state, botColor);
+      if (moves.length === 0)
+        return null;
+      if (moves.length === 1)
+        return { r: moves[0][0], c: moves[0][1] };
+      const root = {
+        r: -2,
+        c: -2,
+        parent: null,
+        children: [],
+        visits: 0,
+        wins: 0,
+        untriedMoves: moves,
+        playerJustMoved: botColor
+      };
+      const budget = budgetOverride ?? getMCTSBudget(state.size);
+      const startTime = performance.now();
+      let iterations = 0;
+      while (iterations < budget.maxIterations) {
+        const elapsed = performance.now() - startTime;
+        if (elapsed >= budget.maxTimeMs)
+          break;
+        let node = root;
+        const simState = copyState(state);
+        while (node.untriedMoves.length === 0 && node.children.length > 0 && !simState.gameOver) {
+          node = selectChild(node);
+          if (node.r === -1 && node.c === -1) {
+            pass(simState);
+          } else {
+            placeStone(simState, node.r, node.c);
+          }
+        }
+        if (node.untriedMoves.length > 0 && !simState.gameOver) {
+          node = expand(node, simState);
+        }
+        const winner = rollout(simState);
+        backpropagate(node, winner);
+        iterations++;
+      }
+      const best = bestChild(root);
+      return { r: best.r, c: best.c };
+    }
+  };
+}
 
 // src/web/app.ts
 setBotDeps(getNeighbors, findGroup, countLiberties, isValidMoveForColor);
 var BOT_FACTORIES = {
   1: createRandomBot,
   2: createGreedyBot,
-  3: createHeuristicBot
+  3: createHeuristicBot,
+  4: createMCTSBot
 };
 var S = {
   game: createInitialState(9),
@@ -698,6 +845,7 @@ function setupTestDOM() {
     '      <option value="1">1 Random</option>',
     '      <option value="2">2 Greedy</option>',
     '      <option value="3">3 Heuristic</option>',
+    '      <option value="4">4 MCTS</option>',
     "    </select>",
     "  </div>",
     '  <div class="control-group">',
