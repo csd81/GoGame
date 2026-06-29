@@ -96,15 +96,17 @@ describe("Scoring — edge cases", () => {
 })
 
 describe("Render — edge cases", () => {
+  const ascii = { unicode: false, color: false } as const
+
   it("renderBoard with size 1", () => {
     const s = createInitialState(1)
-    const out = renderBoard(s)
+    const out = renderBoard(s, ascii)
     expect(out).toContain("1")
     expect(out).toContain("A")
   })
   it("renderBoard with size 25", () => {
     const s = createInitialState(25)
-    const out = renderBoard(s)
+    const out = renderBoard(s, ascii)
     expect(out).toContain("A")
     expect(out).toContain("Y")  // 25th letter
   })
@@ -115,7 +117,27 @@ describe("Render — edge cases", () => {
   it("renderStatus at game over", () => {
     const s = createInitialState(9)
     s.gameOver = true
-    expect(() => renderStatus(s)).not.toThrow()
+    expect(() => renderStatus(s, ascii)).not.toThrow()
+  })
+  it("renderBoard at game over with last move still renders", () => {
+    const s = createInitialState(9)
+    placeStone(s, 4, 4)
+    s.gameOver = true
+    const out = renderBoard(s, ascii)
+    expect(out).toContain("B")
+    expect(out).not.toContain("\x1b")
+  })
+  it("fallback mode produces clean ASCII output with no ANSI codes", () => {
+    const s = createInitialState(9)
+    placeStone(s, 4, 4)
+    const out = renderBoard(s, ascii)
+    expect(out).not.toContain("\x1b")
+  })
+  it("status with no moves shows turn count 0 and no last move", () => {
+    const s = createInitialState(9)
+    const status = renderStatus(s, ascii)
+    expect(status).toContain("Turn 0")
+    expect(status).not.toContain("Last:")
   })
 })
 

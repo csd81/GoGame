@@ -3,7 +3,7 @@
  * Each bot implements selectMove(state, botColor).
  * Pure functions — no side effects beyond Math.random().
  */
-import { EMPTY, BLACK, WHITE } from "./engine.ts"
+import { EMPTY, BLACK, WHITE, isStarPoint } from "./engine.ts"
 import type { GameState, Cell, MoveResult } from "./engine.ts"
 
 export interface Bot {
@@ -112,6 +112,257 @@ export function createGreedyBot(): Bot {
       if (candidates.length === 0) return null
       candidates.sort((a, b) => a.score - b.score)
       return { r: candidates[0]!.r, c: candidates[0]!.c }
+    }
+  }
+}
+
+// ============================================================
+// Level 3 — Heuristic Bot
+// ============================================================
+
+const INFLUENCE_RADIUS = 5
+const CAPTURE_WEIGHT = 25
+const ATARI_WEIGHT = 15
+const DEFENSE_WEIGHT = 12
+const INFLUENCE_DELTA_WEIGHT = 2
+const CONNECTION_WEIGHT = 4
+const TERRITORY_WEIGHT = 3
+const EDGE_PENALTY_1 = -4
+const EDGE_PENALTY_2 = -2
+const STAR_POINT_BONUS = 3
+const CENTER_BIAS_WEIGHT = 1
+
+function buildInfluenceMap(board: Board, size: number): number[][] {
+  const map = Array.from({ length: size }, () => Array<number>(size).fill(0))
+  const radius = INFLUENCE_RADIUS
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      if (board[r][c] === EMPTY) continue
+      const sign = board[r][c] === BLACK ? 1 : -1
+      for (let dr = -radius; dr <= radius; dr++) {
+        for (let dc = -radius; dc <= radius; dc++) {
+          if (dr === 0 && dc === 0) continue
+          const nr = r + dr
+          const nc = c + dc
+          if (nr < 0 || nr >= size || nc < 0 || nc >= size) continue
+          const dist = Math.max(Math.abs(dr), Math.abs(dc))
+          map[nr][nc] += sign * (radius - dist) / radius
+        }
+      }
+    }
+  }
+  return map
+}
+
+function getInfluenceAround(influence: number[][], r: number, c: number, size: number, radius: number): number {
+  let sum = 0
+  for (let dr = -radius; dr <= radius; dr++) {
+    for (let dc = -radius; dc <= radius; dc++) {
+      const nr = r + dr
+      const nc = c + dc
+      if (nr >= 0 && nr < size && nc >= 0 && nc < size) {
+        sum += influence[nr][nc]
+      }
+    }
+  }
+  return sum
+}
+
+function edgePenalty(r: number, c: number, size: number): number {
+  const minDist = Math.min(r, c, size - 1 - r, size - 1 - c)
+  if (minDist === 0) return EDGE_PENALTY_1  // first line
+  if (minDist === 1) return EDGE_PENALTY_2  // second line
+  return 0
+}
+
+function centerBias(r: number, c: number, size: number): number {
+  const center = (size - 1) / 2
+  const maxDist = center
+  const dist = Math.abs(r - center) + Math.abs(c - center)
+  return CENTER_BIAS_WEIGHT * (1 - dist / (maxDist * 2))
+}
+
+function isEarlyGame(state: GameState): boolean {
+  let stones = 0
+  for (let r = 0; r < state.size; r++)
+    for (let c = 0; c < state.size; c++)
+      if (state.board[r][c] !== EMPTY) stones++
+  return stones < 40
+}
+
+function hasGroupAtari(board: Board, color: Cell): boolean {
+  const size = board.length
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      if (board[r][c] === color) {
+        const group = findGroupRef(board, r, c)
+        if (countLibertiesRef(board, group) === 1) return true
+      }
+    }
+  }
+  return false
+}
+
+function countFriendlyNeighbors(board: Board, r: number, c: number, color: Cell, size: number): number {
+  let count = 0
+  for (const [nr, nc] of getNeighborsRef(r, c, size)) {
+    if (board[nr][nc] === color) count++
+  }
+  return count
+}
+
+function getLegalMoves(state: GameState, color: Cell): [number, number][] {
+  const moves: [number, number][] = []
+  for (let r = 0; r < state.size; r++) {
+    for (let c = 0; c < state.size; c++) {
+      if (state.board[r][c] !== EMPTY) continue
+      const result = isValidMoveRef(state, r, c, color)
+      if (result.valid) moves.push([r, c])
+    }
+  }
+  return moves
+}
+
+function scoreMove(state: GameState, r: number, c: number, color: Cell): number {
+  const { size } = state
+  const opponent: Cell = color === BLACK ? WHITE : BLACK
+
+  // Simulate the move
+  const result = isValidMoveRef(state, r, c, color)
+  if (!result.valid || !result.newBoard) return -Infinity
+
+  const newBoard = result.newBoard
+  const captured = result.captured!
+
+  // Compute scores
+  let score = 0
+
+  // 1. Capture value
+  score += captured * CAPTURE_WEIGHT
+
+  // 2. Atari — does this move put any enemy group at 1 liberty?
+  if (hasGroupAtari(newBoard, opponent)) {
+    score += ATARI_WEIGHT
+  }
+
+  // 3. Defense — does this move save a friendly group from atari?
+  if (hasGroupAtari(state.board, color) && !hasGroupAtari(newBoard, color)) {
+    score += DEFENSE_WEIGHT
+  }
+
+  // 4. Connection
+  score += countFriendlyNeighbors(newBoard, r, c, color, size) * CONNECTION_WEIGHT
+
+  // 5. Influence delta
+  const influenceBefore = buildInfluenceMap(state.board, size)
+  const influenceAfter = buildInfluenceMap(newBoard, size)
+  const deltaBefore = getInfluenceAround(influenceBefore, r, c, size, 3)
+  const deltaAfter = getInfluenceAround(influenceAfter, r, c, size, 3)
+  const sign = color === BLACK ? 1 : -1
+  score += (deltaAfter - deltaBefore) * sign * INFLUENCE_DELTA_WEIGHT
+
+  // 6. Edge penalty
+  score += edgePenalty(r, c, size)
+
+  // 7. Star point bonus
+  if (isStarPoint(r, c, size) && isEarlyGame(state)) {
+    score += STAR_POINT_BONUS
+  }
+
+  // 8. Center bias
+  score += centerBias(r, c, size)
+
+  return score
+}
+
+function evaluatePosition(state: GameState, color: Cell): number {
+  const opponent: Cell = color === BLACK ? WHITE : BLACK
+  const influence = buildInfluenceMap(state.board, state.size)
+  let score = 0
+  for (let r = 0; r < state.size; r++)
+    for (let c = 0; c < state.size; c++)
+      score += influence[r][c]
+  const sign = color === BLACK ? 1 : -1
+  score += (state.captures[color] - state.captures[opponent]) * CAPTURE_WEIGHT * sign
+  return score * sign  // positive = good for color
+}
+
+export function createHeuristicBot(): Bot {
+  return {
+    name: "Heuristic",
+    selectMove(state: GameState, botColor: typeof BLACK | typeof WHITE): { r: number; c: number } | null {
+      const moves = getLegalMoves(state, botColor)
+      if (moves.length === 0) return null
+
+      let bestMove = moves[0]!
+      let bestScore = -Infinity
+
+      for (const [r, c] of moves) {
+        const score = scoreMove(state, r, c, botColor)
+        if (score > bestScore) {
+          bestScore = score
+          bestMove = [r, c]
+        }
+      }
+
+      return { r: bestMove[0], c: bestMove[1] }
+    }
+  }
+}
+
+export function createHeuristicBot2Ply(): Bot {
+  return {
+    name: "Heuristic 2-Ply",
+    selectMove(state: GameState, botColor: typeof BLACK | typeof WHITE): { r: number; c: number } | null {
+      const moves = getLegalMoves(state, botColor)
+      if (moves.length === 0) return null
+
+      const opponent: Cell = botColor === BLACK ? WHITE : BLACK
+      let bestMove = moves[0]!
+      let bestScore = -Infinity
+      const K = Math.min(8, moves.length)
+
+      // Score all moves with base heuristic, sort, take top K
+      const scored = moves.map(([r, c]) => ({ r, c, score: scoreMove(state, r, c, botColor) }))
+      scored.sort((a, b) => b.score - a.score)
+
+      for (let i = 0; i < K; i++) {
+        const { r, c, score: baseScore } = scored[i]!
+
+        // Simulate this move
+        const simResult = isValidMoveRef(state, r, c, botColor)
+        if (!simResult.valid || !simResult.newBoard) continue
+
+        // Create simulated state
+        const simState: GameState = {
+          size: state.size,
+          board: simResult.newBoard,
+          currentPlayer: opponent,
+          captures: { ...state.captures },
+          history: [...state.history],
+          consecutivePasses: 0,
+          gameOver: false,
+        }
+        simState.captures[botColor] += simResult.captured!
+
+        // Find opponent's best response
+        const oppMoves = getLegalMoves(simState, opponent)
+        let oppBestScore = 0
+        if (oppMoves.length > 0) {
+          for (const [or2, oc2] of oppMoves) {
+            const oppScore = scoreMove(simState, or2, oc2, opponent)
+            if (oppScore > oppBestScore) oppBestScore = oppScore
+          }
+        }
+
+        const adjustedScore = baseScore - oppBestScore * 0.3
+        if (adjustedScore > bestScore) {
+          bestScore = adjustedScore
+          bestMove = [r, c]
+        }
+      }
+
+      return { r: bestMove[0], c: bestMove[1] }
     }
   }
 }

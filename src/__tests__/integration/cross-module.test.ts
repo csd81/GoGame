@@ -29,8 +29,8 @@ describe("Engine + Render integration", () => {
     s.currentPlayer = BLACK
     s.history.push("")
     placeStone(s, 1, 0)  // Black captures
-    const status = renderStatus(s)
-    expect(status).toContain("Black: 1")
+    const status = renderStatus(s, { unicode: false, color: false })
+    expect(status).toContain("Captures B 1 W 0")
   })
   it("parseCoord round-trips with renderBoard", () => {
     const s = createInitialState(9)

@@ -21,6 +21,8 @@ export interface GameState {
   history: string[]
   consecutivePasses: number
   gameOver: boolean
+  moveCount: number
+  lastMove: { r: number; c: number } | null
 }
 
 export interface MoveResult {
@@ -152,6 +154,8 @@ export function placeStone(state: GameState, r: number, c: number): boolean {
   state.captures[state.currentPlayer] += result.captured!
   state.consecutivePasses = 0
   state.currentPlayer = state.currentPlayer === BLACK ? WHITE : BLACK
+  state.moveCount++
+  state.lastMove = { r, c }
   return true
 }
 
@@ -160,6 +164,8 @@ export function pass(state: GameState): void {
   state.history.push(boardKey(state.board))
   state.currentPlayer = state.currentPlayer === BLACK ? WHITE : BLACK
   if (state.consecutivePasses >= 2) state.gameOver = true
+  state.moveCount++
+  state.lastMove = null
 }
 
 export function resign(state: GameState): void {
@@ -175,6 +181,8 @@ export function createInitialState(size: number = 19): GameState {
     history: [],
     consecutivePasses: 0,
     gameOver: false,
+    moveCount: 0,
+    lastMove: null,
   }
 }
 

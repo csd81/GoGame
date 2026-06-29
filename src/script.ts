@@ -3,7 +3,7 @@ import * as readline from "readline"
 import type { GameState, Cell } from "./engine.ts"
 import { BLACK, WHITE, createInitialState, pass, placeStone, resign, countScore } from "./engine.ts"
 import { renderBoard, renderStatus, printUI, showHelp, showResult, parseCoord } from "./render.ts"
-import { createRandomBot, createGreedyBot, setBotDeps } from "./bots.ts"
+import { createRandomBot, createGreedyBot, createHeuristicBot, setBotDeps } from "./bots.ts"
 import type { Bot } from "./bots.ts"
 import { getNeighbors, findGroup, countLiberties, isValidMoveForColor } from "./engine.ts"
 
@@ -41,8 +41,11 @@ async function main(): Promise<void> {
         return
       }
       awaitingAiDifficulty = true
-      rl.question("Choose difficulty (1=Random, 2=Greedy) [2]: ", (diffAnswer) => {
-        bot = diffAnswer.trim() === "1" ? createRandomBot() : createGreedyBot()
+      rl.question("Choose difficulty (1=Random, 2=Greedy, 3=Heuristic) [3]: ", (diffAnswer) => {
+        const diff = diffAnswer.trim()
+        if (diff === "1") bot = createRandomBot()
+        else if (diff === "2") bot = createGreedyBot()
+        else bot = createHeuristicBot()
         awaitingAiDifficulty = false
         waitingForAiColor = true
         rl.question("Your color? (B/black or W/white) [B]: ", (colorAnswer) => {
