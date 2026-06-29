@@ -5,7 +5,9 @@
   "private": true,
   "scripts": {
     "start": "bun run script.ts",
-    "typecheck": "bunx tsc --noEmit",
+    "dev": "bun x serve src/web -l 8080 --no-clipboard",
+    "dev:watch": "bun build src/web/app.ts --outfile=src/web/bundle.js --target=browser --watch",
+    "typecheck": "bun x tsc --noEmit",
     "build:web": "bun build src/web/app.ts --outfile=src/web/bundle.js --target=browser"
   },
   "devDependencies": {
