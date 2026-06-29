@@ -11,10 +11,10 @@ const EMPTY = 0 as const;
 const BLACK = 1 as const;
 const WHITE = 2 as const;
 
-type Cell = typeof EMPTY | typeof BLACK | typeof WHITE;
-type Board = Cell[][];
+export type Cell = typeof EMPTY | typeof BLACK | typeof WHITE;
+export type Board = Cell[][];
 
-interface GameState {
+export interface GameState {
   size: number;
   board: Board;
   currentPlayer: typeof BLACK | typeof WHITE;
@@ -36,7 +36,7 @@ function boardKey(board: Board): string {
   return board.map(row => row.join('')).join('|');
 }
 
-function getNeighbors(r: number, c: number, size: number): [number, number][] {
+export function getNeighbors(r: number, c: number, size: number): [number, number][] {
   const dirs: [number, number][] = [[-1, 0], [1, 0], [0, -1], [0, 1]];
   const result: [number, number][] = [];
   for (const [dr, dc] of dirs) {
@@ -49,7 +49,7 @@ function getNeighbors(r: number, c: number, size: number): [number, number][] {
   return result;
 }
 
-function findGroup(board: Board, r: number, c: number): [number, number][] {
+export function findGroup(board: Board, r: number, c: number): [number, number][] {
   const color = board[r][c];
   if (color === EMPTY) return [];
   const size = board.length;
@@ -71,7 +71,7 @@ function findGroup(board: Board, r: number, c: number): [number, number][] {
   return group;
 }
 
-function countLiberties(board: Board, group: [number, number][]): number {
+export function countLiberties(board: Board, group: [number, number][]): number {
   const size = board.length;
   const liberties = new Set<number>();
   for (const [r, c] of group) {
@@ -86,7 +86,7 @@ function countLiberties(board: Board, group: [number, number][]): number {
 
 // 3. Move Logic
 
-interface MoveResult {
+export interface MoveResult {
   valid: boolean;
   reason?: string;
   newBoard?: Board;
@@ -125,6 +125,20 @@ function isValidMove(state: GameState, r: number, c: number): MoveResult {
     return { valid: false, reason: "Game is over." };
   }
   const result = tryPlaceStone(state.board, r, c, state.currentPlayer);
+  if (!result.valid || !result.newBoard) return result;
+  const newKey = boardKey(result.newBoard);
+  if (state.history.length >= 2 && newKey === state.history[state.history.length - 2]) {
+    return { valid: false, reason: "Ko rule - cannot repeat previous position." };
+  }
+  return result;
+}
+
+/** Same as isValidMove but accepts an explicit color (used by bots). */
+export function isValidMoveForColor(state: GameState, r: number, c: number, color: Cell): MoveResult {
+  if (state.gameOver) {
+    return { valid: false, reason: "Game is over." };
+  }
+  const result = tryPlaceStone(state.board, r, c, color);
   if (!result.valid || !result.newBoard) return result;
   const newKey = boardKey(result.newBoard);
   if (state.history.length >= 2 && newKey === state.history[state.history.length - 2]) {
@@ -310,6 +324,11 @@ function showResult(state: GameState): void {
 // 7. Entry Point
 
 import * as readline from "readline";
+import { createRandomBot, createGreedyBot, setBotDeps } from "./bots.ts";
+import type { Bot } from "./bots.ts";
+
+// Wire up bot dependencies
+setBotDeps(getNeighbors, findGroup, countLiberties, isValidMoveForColor);
 
 async function main(): Promise<void> {
   console.log("=== ANCIENT GO ===\n");
@@ -321,6 +340,12 @@ async function main(): Promise<void> {
 
   let state: GameState | null = null;
   let awaitingSize = true;
+  let bot: Bot | null = null;
+  let humanColor: typeof BLACK | typeof WHITE = BLACK;
+  let botColor: typeof BLACK | typeof WHITE = WHITE;
+  let awaitingAiSetup = false;
+  let waitingForAiColor = false;
+  let waitingForAiDifficulty = false;
 
   // Ask for board size first
   rl.question("Board size? (9/13/19) [19]: ", (answer) => {
@@ -328,12 +353,76 @@ async function main(): Promise<void> {
     const size = [9, 13, 19].includes(n) ? n : 19;
     state = createInitialState(size);
     awaitingSize = false;
-    showHelp();
-    printUI(state);
+    // Ask if playing against AI
+    awaitingAiSetup = true;
+    rl.question("Play against AI? (y/n) [n]: ", (aiAnswer) => {
+      const wantsAi = aiAnswer.trim().toLowerCase() === "y";
+      if (!wantsAi) {
+        showHelp();
+        printUI(state);
+        return;
+      }
+      // Ask difficulty
+      awaitingAiDifficulty = true;
+      rl.question("Choose difficulty (1=Random, 2=Greedy) [2]: ", (diffAnswer) => {
+        const diff = diffAnswer.trim();
+        if (diff === "1") {
+          bot = createRandomBot();
+        } else {
+          bot = createGreedyBot();
+        }
+        awaitingAiDifficulty = false;
+        // Ask color
+        waitingForAiColor = true;
+        rl.question("Your color? (B/black or W/white) [B]: ", (colorAnswer) => {
+          const c = colorAnswer.trim().toLowerCase();
+          if (c === "w" || c === "white") {
+            humanColor = WHITE;
+            botColor = BLACK;
+          } else {
+            humanColor = BLACK;
+            botColor = WHITE;
+          }
+          waitingForAiColor = false;
+          awaitingAiSetup = false;
+          showHelp();
+          printUI(state);
+          // If bot goes first (human picked White), trigger bot move
+          if (state && bot && state.currentPlayer === botColor) {
+            triggerBotMove(state, bot, botColor, humanColor, rl);
+          }
+        });
+      });
+    });
   });
 
+  function triggerBotMove(s: GameState, b: Bot, bColor: typeof BLACK | typeof WHITE, hColor: typeof BLACK | typeof WHITE, rli: readline.Interface): void {
+    console.log("  [AI] Thinking...");
+    const move = b.selectMove(s, bColor);
+    if (move === null) {
+      console.log("  [AI] passes.");
+      pass(s);
+      if (s.gameOver) { printUI(s); showResult(s); rli.close(); process.exit(0); }
+      printUI(s);
+      // If still bot's turn after pass (shouldn't normally happen in 2-player alternating), recurse
+      if (!s.gameOver && s.currentPlayer === bColor) {
+        setTimeout(() => triggerBotMove(s, b, bColor, hColor, rli), 100);
+      }
+      return;
+    }
+    const ok = placeStone(s, move.r, move.c);
+    if (ok) {
+      const rowLabel = s.size - move.r;
+      const colLabel = String.fromCharCode(65 + move.c);
+      console.log("  [AI] plays " + colLabel + rowLabel + ".");
+    }
+    printUI(s);
+    if (s.gameOver) { showResult(s); rli.close(); process.exit(0); }
+  }
+
   rl.on("line", (line: string) => {
-    if (awaitingSize || !state) return;
+    if (awaitingSize || awaitingAiSetup || awaitingAiDifficulty || waitingForAiColor) return;
+    if (!state) return;
 
     const cmd = line.trim().toLowerCase();
 
@@ -351,13 +440,32 @@ async function main(): Promise<void> {
       pass(state);
       if (state.gameOver) { printUI(state); showResult(state); rl.close(); process.exit(0); }
       printUI(state);
+      // Bot's turn?
+      if (bot && state.currentPlayer === botColor) {
+        setTimeout(() => triggerBotMove(state, bot, botColor, humanColor, rl), 100);
+      }
       return;
     }
     if (cmd === "resign") {
-      resign(state);
-      showResult(state);
-      rl.close();
-      process.exit(0);
+      if (bot) {
+        console.log("  [RESIGN] Human resigns. AI wins!");
+        showResult(state);
+        rl.close();
+        process.exit(0);
+      } else {
+        resign(state);
+        showResult(state);
+        rl.close();
+        process.exit(0);
+      }
+      return;
+    }
+
+    // Only accept input on human's turn
+    if (bot && state.currentPlayer !== humanColor) {
+      console.log("  [X] It's the AI's turn. Wait...");
+      printUI(state);
+      return;
     }
 
     const coord = parseCoord(line, state.size);
@@ -369,6 +477,11 @@ async function main(): Promise<void> {
     placeStone(state, coord[0], coord[1]);
     if (state.gameOver) { printUI(state); showResult(state); rl.close(); process.exit(0); }
     printUI(state);
+
+    // Bot's turn?
+    if (bot && state.currentPlayer === botColor) {
+      setTimeout(() => triggerBotMove(state, bot, botColor, humanColor, rl), 100);
+    }
   });
 }
 
