@@ -5,9 +5,11 @@
   "private": true,
   "scripts": {
     "start": "bun run script.ts",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "bunx tsc --noEmit",
+    "build:web": "bun build src/web/app.ts --outfile=src/web/bundle.js --target=browser"
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "^20.10.6",
     "@types/bun": "latest"
   },
   "peerDependencies": {
