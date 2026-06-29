@@ -9,7 +9,8 @@ import {
   isStarPoint,
   createInitialState,
   isValidMove, isValidMoveForColor, placeStone, pass, resign,
-  countScore,
+  countScore, copyState, getLegalMoves,
+  undo, redo, canUndo, canRedo, undoMultiple,
 } from "../../engine.ts"
 
 describe("createBoard", () => {
@@ -224,5 +225,155 @@ describe("countScore", () => {
     const score = countScore(s)
     expect(score.blackScore).toBe(3)
     expect(score.whiteScore).toBe(8.5)
+  })
+})
+
+describe("undo / redo", () => {
+  it("undo after 1 move restores empty board", () => {
+    const s = createInitialState(9)
+    placeStone(s, 4, 4)
+    undo(s)
+    expect(s.board[4][4]).toBe(EMPTY)
+    expect(s.currentPlayer).toBe(BLACK)
+    expect(s.moveCount).toBe(0)
+    expect(canUndo(s)).toBe(false)
+    expect(canRedo(s)).toBe(true)
+  })
+
+  it("undo after 2 moves restores 1-move state", () => {
+    const s = createInitialState(9)
+    placeStone(s, 4, 4) // B
+    placeStone(s, 3, 3) // W
+    undo(s)
+    expect(s.board[4][4]).toBe(BLACK)
+    expect(s.board[3][3]).toBe(EMPTY)
+    expect(s.currentPlayer).toBe(WHITE)
+  })
+
+  it("undo on empty board returns false", () => {
+    const s = createInitialState(9)
+    expect(undo(s)).toBe(false)
+    expect(canUndo(s)).toBe(false)
+  })
+
+  it("redo after undo restores state", () => {
+    const s = createInitialState(9)
+    placeStone(s, 4, 4)
+    placeStone(s, 3, 3)
+    undo(s)
+    expect(s.board[3][3]).toBe(EMPTY)
+    redo(s)
+    expect(s.board[3][3]).toBe(WHITE)
+    expect(s.currentPlayer).toBe(BLACK)
+  })
+
+  it("redo when nothing to redo returns false", () => {
+    const s = createInitialState(9)
+    expect(redo(s)).toBe(false)
+    placeStone(s, 4, 4)
+    expect(canRedo(s)).toBe(false)
+  })
+
+  it("new move after undo truncates redo buffer", () => {
+    const s = createInitialState(9)
+    placeStone(s, 4, 4) // B
+    placeStone(s, 3, 3) // W
+    undo(s)
+    expect(canRedo(s)).toBe(true)
+    placeStone(s, 5, 5) // W makes a new move
+    expect(canRedo(s)).toBe(false)
+    expect(s.moves.length).toBe(2)
+    expect(s.undoPointer).toBe(2)
+  })
+
+  it("undoPointer in copyState is correct", () => {
+    const s = createInitialState(9)
+    placeStone(s, 4, 4)
+    placeStone(s, 3, 3)
+    undo(s)
+    const c = copyState(s)
+    expect(c.undoPointer).toBe(1)
+    expect(c.currentPlayer).toBe(WHITE)
+  })
+
+  it("two undos then two redos restores original", () => {
+    const s = createInitialState(9)
+    placeStone(s, 4, 4)
+    placeStone(s, 3, 3)
+    placeStone(s, 5, 5)
+    undo(s)
+    undo(s)
+    expect(s.moveCount).toBe(1)
+    expect(s.moves.length).toBe(3)
+    redo(s)
+    redo(s)
+    expect(s.moveCount).toBe(3)
+    expect(s.board[5][5]).toBe(BLACK)
+  })
+
+  it("pass then undo restores pre-pass state", () => {
+    const s = createInitialState(9)
+    placeStone(s, 4, 4)
+    pass(s)
+    undo(s)
+    expect(s.currentPlayer).toBe(WHITE)
+    expect(s.board[4][4]).toBe(BLACK)
+    expect(s.consecutivePasses).toBe(0)
+  })
+
+  it("undoMultiple undoes n moves", () => {
+    const s = createInitialState(9)
+    placeStone(s, 4, 4)
+    placeStone(s, 3, 3)
+    placeStone(s, 5, 5)
+    const undone = undoMultiple(s, 2)
+    expect(undone).toBe(2)
+    expect(s.moveCount).toBe(1)
+    expect(s.board[4][4]).toBe(BLACK)
+    expect(s.board[3][3]).toBe(EMPTY)
+  })
+
+  it("undoMultiple with n larger than move count stops at 0", () => {
+    const s = createInitialState(9)
+    placeStone(s, 4, 4)
+    const undone = undoMultiple(s, 10)
+    expect(undone).toBe(1)
+    expect(canUndo(s)).toBe(false)
+  })
+
+  it("cannot undo when game is over", () => {
+    const s = createInitialState(9)
+    placeStone(s, 4, 4)
+    s.gameOver = true
+    expect(canUndo(s)).toBe(false)
+    expect(undo(s)).toBe(false)
+  })
+
+  it("undo performance on 200-move game within 100ms", () => {
+    const s = createInitialState(19)
+    // Play 200 random legal moves
+    for (let i = 0; i < 200 && !s.gameOver; i++) {
+      const moves = getLegalMoves(s, s.currentPlayer)
+      if (moves.length === 0) { pass(s); continue }
+      const [r, c] = moves[Math.floor(Math.random() * moves.length)]!
+      placeStone(s, r, c)
+    }
+    expect(s.moves.length).toBeGreaterThan(0)
+    const start = performance.now()
+    undo(s)
+    const elapsed = performance.now() - start
+    expect(elapsed).toBeLessThan(100)
+    expect(s.moveCount).toBe(s.moves.length - 1)
+  })
+
+  it("moves array is append-only (not mutated by undo)", () => {
+    const s = createInitialState(9)
+    placeStone(s, 4, 4)
+    placeStone(s, 3, 3)
+    placeStone(s, 5, 5)
+    const moveLenBefore = s.moves.length
+    undo(s)
+    expect(s.moves.length).toBe(moveLenBefore) // still 3
+    expect(s.undoPointer).toBe(2)
   })
 })

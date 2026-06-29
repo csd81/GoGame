@@ -118,6 +118,9 @@ function placeStone(state, r, c) {
   const result = isValidMove(state, r, c);
   if (!result.valid || !result.newBoard)
     return false;
+  if (state.undoPointer < state.moves.length) {
+    state.moves.length = state.undoPointer;
+  }
   state.moves.push({ color: state.currentPlayer, r, c });
   state.board = result.newBoard;
   state.history.push(boardKey(state.board));
@@ -126,9 +129,13 @@ function placeStone(state, r, c) {
   state.currentPlayer = state.currentPlayer === BLACK ? WHITE : BLACK;
   state.moveCount++;
   state.lastMove = { r, c };
+  state.undoPointer = state.moves.length;
   return true;
 }
 function pass(state) {
+  if (state.undoPointer < state.moves.length) {
+    state.moves.length = state.undoPointer;
+  }
   state.moves.push({ color: state.currentPlayer, r: null, c: null });
   state.consecutivePasses++;
   state.history.push(boardKey(state.board));
@@ -137,6 +144,7 @@ function pass(state) {
     state.gameOver = true;
   state.moveCount++;
   state.lastMove = null;
+  state.undoPointer = state.moves.length;
 }
 function resign(state) {
   state.gameOver = true;
@@ -152,7 +160,8 @@ function createInitialState(size = 19) {
     gameOver: false,
     moveCount: 0,
     lastMove: null,
-    moves: []
+    moves: [],
+    undoPointer: 0
   };
 }
 function copyState(state) {
@@ -166,8 +175,61 @@ function copyState(state) {
     gameOver: state.gameOver,
     moveCount: state.moveCount,
     lastMove: state.lastMove ? { r: state.lastMove.r, c: state.lastMove.c } : null,
-    moves: [...state.moves]
+    moves: [...state.moves],
+    undoPointer: state.undoPointer
   };
+}
+function replayMoves(state, targetPointer) {
+  const fullMoves = [...state.moves];
+  const size = state.size;
+  state.board = createBoard(size);
+  state.captures = { [BLACK]: 0, [WHITE]: 0 };
+  state.history = [];
+  state.currentPlayer = BLACK;
+  state.consecutivePasses = 0;
+  state.gameOver = false;
+  state.moveCount = 0;
+  state.lastMove = null;
+  state.moves = [];
+  for (let i = 0;i < targetPointer; i++) {
+    const m = fullMoves[i];
+    if (state.gameOver)
+      break;
+    if (m.r === null || m.c === null) {
+      pass(state);
+    } else {
+      placeStone(state, m.r, m.c);
+    }
+  }
+  state.moves = fullMoves;
+  state.undoPointer = targetPointer;
+}
+function canUndo(state) {
+  return state.undoPointer > 0 && !state.gameOver;
+}
+function undo(state) {
+  if (state.undoPointer <= 0 || state.gameOver)
+    return false;
+  replayMoves(state, state.undoPointer - 1);
+  return true;
+}
+function canRedo(state) {
+  return state.undoPointer < state.moves.length && !state.gameOver;
+}
+function redo(state) {
+  if (state.undoPointer >= state.moves.length || state.gameOver)
+    return false;
+  replayMoves(state, state.undoPointer + 1);
+  return true;
+}
+function undoMultiple(state, n) {
+  let undone = 0;
+  for (let i = 0;i < n; i++) {
+    if (!undo(state))
+      break;
+    undone++;
+  }
+  return undone;
 }
 function countScore(state) {
   const { board, size, captures } = state;
@@ -1073,6 +1135,37 @@ function doResign() {
   render();
   showGameOver();
 }
+function doUndo() {
+  if (S.game.gameOver || S.busy)
+    return;
+  if (S.bot && getActiveBot() !== null) {
+    const undone = undoMultiple(S.game, 2);
+    if (undone === 0)
+      return;
+  } else if (getActiveBot() !== null) {
+    return;
+  } else if (!canUndo(S.game)) {
+    return;
+  } else {
+    undo(S.game);
+  }
+  render();
+}
+function doRedo() {
+  if (S.game.gameOver || S.busy)
+    return;
+  if (getActiveBot() !== null)
+    return;
+  if (!canRedo(S.game))
+    return;
+  redo(S.game);
+  render();
+  if (S.game.gameOver) {
+    showGameOver();
+    return;
+  }
+  scheduleBotMove();
+}
 function doSGFExport() {
   const sgfStr = exportSGF(S.game, {
     playerBlack: S.playerColor === BLACK ? "Human" : "AI (Level " + S.level + ")",
@@ -1180,6 +1273,10 @@ function setupTestDOM() {
     '  <div class="control-group">',
     '    <button id="new-game-btn">New Game</button>',
     "  </div>",
+    '  <div class="control-group undo-group">',
+    '    <button id="undo-btn">Undo (Ctrl+Z)</button>',
+    '    <button id="redo-btn">Redo (Ctrl+Y)</button>',
+    "  </div>",
     '  <div class="control-group">',
     '    <button id="pass-btn">Pass (P)</button>',
     '    <button id="resign-btn">Resign (R)</button>',
@@ -1239,6 +1336,8 @@ if (typeof document !== "undefined") {
     $colorSelect.value = String(S.playerColor);
     document.getElementById("pass-btn").addEventListener("click", doPass);
     document.getElementById("resign-btn").addEventListener("click", doResign);
+    document.getElementById("undo-btn").addEventListener("click", doUndo);
+    document.getElementById("redo-btn").addEventListener("click", doRedo);
     document.getElementById("new-game-btn").addEventListener("click", newGame);
     document.getElementById("sgf-export-btn").addEventListener("click", doSGFExport);
     document.getElementById("sgf-import-btn").addEventListener("click", () => {
@@ -1256,12 +1355,28 @@ if (typeof document !== "undefined") {
     });
     $colorSelect.addEventListener("change", () => newGame());
     document.addEventListener("keydown", (e) => {
-      if (e.key === "p" || e.key === "P")
-        doPass();
-      if (e.key === "r" || e.key === "R")
-        doResign();
-      if (e.key === "n" || e.key === "N")
-        newGame();
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement)
+        return;
+      if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault();
+        doUndo();
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === "y" || e.key === "Y")) {
+        e.preventDefault();
+        doRedo();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === "Z") {
+        e.preventDefault();
+        doRedo();
+      }
+      if (!e.ctrlKey && !e.metaKey) {
+        if (e.key === "p" || e.key === "P")
+          doPass();
+        if (e.key === "r" || e.key === "R")
+          doResign();
+        if (e.key === "n" || e.key === "N")
+          newGame();
+      }
     });
     buildGrid(S.size);
     S.bot = BOT_FACTORIES[S.level]?.() ?? null;
@@ -1287,9 +1402,11 @@ export {
   isStarPoint2 as isStarPoint,
   grid,
   getActiveBot,
+  doUndo,
   doSGFImport,
   doSGFExport,
   doResign,
+  doRedo,
   doPass,
   buildGrid,
   S,

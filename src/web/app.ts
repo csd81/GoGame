@@ -5,7 +5,7 @@
 import {
   EMPTY, BLACK, WHITE, createInitialState, placeStone, pass, resign,
   countScore, isValidMove, getNeighbors, findGroup, countLiberties,
-  isValidMoveForColor,
+  isValidMoveForColor, undo, redo, canUndo, canRedo, undoMultiple,
 } from "../engine.ts"
 import type { GameState, Cell } from "../engine.ts"
 import { setBotDeps, createRandomBot, createGreedyBot, createHeuristicBot, createMCTSBot } from "../bots.ts"
@@ -253,6 +253,39 @@ export function doResign(): void {
   showGameOver()
 }
 
+export function doUndo(): void {
+  if (S.game.gameOver || S.busy) return
+
+  if (S.bot && getActiveBot() !== null) {
+    // Bot's turn — undo both human and bot moves
+    const undone = undoMultiple(S.game, 2)
+    if (undone === 0) return
+  } else if (getActiveBot() !== null) {
+    // Not our turn (dual-AI game? shouldn't happen)
+    return
+  } else if (!canUndo(S.game)) {
+    return
+  } else {
+    undo(S.game)
+  }
+  render()
+}
+
+export function doRedo(): void {
+  if (S.game.gameOver || S.busy) return
+  if (getActiveBot() !== null) return
+  if (!canRedo(S.game)) return
+
+  redo(S.game)
+  render()
+
+  if (S.game.gameOver) {
+    showGameOver()
+    return
+  }
+  scheduleBotMove()
+}
+
 export function doSGFExport(): void {
   const sgfStr = exportSGF(S.game, {
     playerBlack: S.playerColor === BLACK ? "Human" : "AI (Level " + S.level + ")",
@@ -366,6 +399,10 @@ export function setupTestDOM(): void {
     '  <div class="control-group">',
     '    <button id="new-game-btn">New Game</button>',
     '  </div>',
+    '  <div class="control-group undo-group">',
+    '    <button id="undo-btn">Undo (Ctrl+Z)</button>',
+    '    <button id="redo-btn">Redo (Ctrl+Y)</button>',
+    '  </div>',
     '  <div class="control-group">',
     '    <button id="pass-btn">Pass (P)</button>',
     '    <button id="resign-btn">Resign (R)</button>',
@@ -434,6 +471,8 @@ if (typeof document !== "undefined") {
 
   document.getElementById("pass-btn")!.addEventListener("click", doPass)
   document.getElementById("resign-btn")!.addEventListener("click", doResign)
+  document.getElementById("undo-btn")!.addEventListener("click", doUndo)
+  document.getElementById("redo-btn")!.addEventListener("click", doRedo)
   document.getElementById("new-game-btn")!.addEventListener("click", newGame)
   document.getElementById("sgf-export-btn")!.addEventListener("click", doSGFExport)
   document.getElementById("sgf-import-btn")!.addEventListener("click", () => {
@@ -450,9 +489,17 @@ if (typeof document !== "undefined") {
   $colorSelect.addEventListener("change", () => newGame())
 
   document.addEventListener("keydown", (e) => {
-    if (e.key === "p" || e.key === "P") doPass()
-    if (e.key === "r" || e.key === "R") doResign()
-    if (e.key === "n" || e.key === "N") newGame()
+    // Skip shortcuts when typing in inputs
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return
+
+    if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) { e.preventDefault(); doUndo() }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "y" || e.key === "Y")) { e.preventDefault(); doRedo() }
+    if ((e.ctrlKey || e.metaKey) && e.key === "Z") { e.preventDefault(); doRedo() } // Ctrl+Shift+Z
+    if (!e.ctrlKey && !e.metaKey) {
+      if (e.key === "p" || e.key === "P") doPass()
+      if (e.key === "r" || e.key === "R") doResign()
+      if (e.key === "n" || e.key === "N") newGame()
+    }
   })
 
   buildGrid(S.size)

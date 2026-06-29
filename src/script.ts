@@ -1,7 +1,7 @@
 // Ancient Go - Entry Point
 import * as readline from "readline"
 import type { GameState, Cell } from "./engine.ts"
-import { BLACK, WHITE, createInitialState, pass, placeStone, resign, countScore } from "./engine.ts"
+import { BLACK, WHITE, createInitialState, pass, placeStone, resign, countScore, undo, redo, canUndo, canRedo, undoMultiple } from "./engine.ts"
 import { renderBoard, renderStatus, printUI, showHelp, showResult, parseCoord } from "./render.ts"
 import { createRandomBot, createGreedyBot, createHeuristicBot, createMCTSBot, setBotDeps } from "./bots.ts"
 import type { Bot } from "./bots.ts"
@@ -92,6 +92,36 @@ async function main(): Promise<void> {
     const cmd = line.trim().toLowerCase()
     if (cmd === "quit" || cmd === "exit") { console.log("Goodbye!"); rl.close(); process.exit(0) }
     if (cmd === "help") { showHelp(); printUI(state); return }
+    if (cmd === "undo" || cmd === "u") {
+      if (bot && state.currentPlayer !== humanColor) {
+        // It's the bot's turn — undo bot's last move + human's last move
+        const undone = undoMultiple(state, 2)
+        if (undone > 0) {
+          console.log("  [UNDO] Undid " + undone + " move(s).")
+          printUI(state)
+        } else {
+          console.log("  [X] Nothing to undo.")
+        }
+      } else if (canUndo(state)) {
+        undo(state)
+        console.log("  [UNDO] Undid last move.")
+        printUI(state)
+      } else {
+        console.log("  [X] Nothing to undo.")
+      }
+      return
+    }
+    if (cmd === "redo" || cmd === "r") {
+      if (canRedo(state)) {
+        redo(state)
+        console.log("  [REDO] Redid last move.")
+        printUI(state)
+        if (bot && state.currentPlayer === botColor) setTimeout(() => triggerBotMove(state, bot, botColor, rl), 100)
+      } else {
+        console.log("  [X] Nothing to redo.")
+      }
+      return
+    }
     if (cmd === "sgf") {
       console.log(formatSGF(exportSGF(state, { playerBlack: humanColor === BLACK ? "Human" : "AI", playerWhite: humanColor === WHITE ? "Human" : "AI" })))
       return

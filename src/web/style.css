@@ -100,12 +100,15 @@ body {
 .control-group button:hover { background: var(--btn-hover); }
 .control-group button:active { transform: scale(0.98); }
 
-#pass-btn, #resign-btn {
+#pass-btn, #resign-btn, #undo-btn, #redo-btn {
   background: transparent;
   color: var(--text);
   border: 1px solid var(--text-dim);
 }
-#pass-btn:hover, #resign-btn:hover { background: var(--panel-bg); border-color: var(--text); }
+#pass-btn:hover, #resign-btn:hover, #undo-btn:hover, #redo-btn:hover { background: var(--panel-bg); border-color: var(--text); }
+
+.undo-group { flex-direction: row !important; }
+.undo-group button { flex: 1; }
 
 /* ── Status ─────────────────────────────────────────── */
 #status {

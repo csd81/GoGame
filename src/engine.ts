@@ -30,6 +30,7 @@ export interface GameState {
   moveCount: number
   lastMove: { r: number; c: number } | null
   moves: MoveRecord[]
+  undoPointer: number
 }
 
 export interface MoveResult {
@@ -156,6 +157,10 @@ export function isValidMoveForColor(state: GameState, r: number, c: number, colo
 export function placeStone(state: GameState, r: number, c: number): boolean {
   const result = isValidMove(state, r, c)
   if (!result.valid || !result.newBoard) return false
+  // Truncate redo buffer if we're branching from an undone state
+  if (state.undoPointer < state.moves.length) {
+    state.moves.length = state.undoPointer
+  }
   state.moves.push({ color: state.currentPlayer, r, c })
   state.board = result.newBoard
   state.history.push(boardKey(state.board))
@@ -164,10 +169,15 @@ export function placeStone(state: GameState, r: number, c: number): boolean {
   state.currentPlayer = state.currentPlayer === BLACK ? WHITE : BLACK
   state.moveCount++
   state.lastMove = { r, c }
+  state.undoPointer = state.moves.length
   return true
 }
 
 export function pass(state: GameState): void {
+  // Truncate redo buffer if we're branching from an undone state
+  if (state.undoPointer < state.moves.length) {
+    state.moves.length = state.undoPointer
+  }
   state.moves.push({ color: state.currentPlayer, r: null, c: null })
   state.consecutivePasses++
   state.history.push(boardKey(state.board))
@@ -175,6 +185,7 @@ export function pass(state: GameState): void {
   if (state.consecutivePasses >= 2) state.gameOver = true
   state.moveCount++
   state.lastMove = null
+  state.undoPointer = state.moves.length
 }
 
 export function resign(state: GameState): void {
@@ -193,6 +204,7 @@ export function createInitialState(size: number = 19): GameState {
     moveCount: 0,
     lastMove: null,
     moves: [],
+    undoPointer: 0,
   }
 }
 
@@ -208,7 +220,69 @@ export function copyState(state: GameState): GameState {
     moveCount: state.moveCount,
     lastMove: state.lastMove ? { r: state.lastMove.r, c: state.lastMove.c } : null,
     moves: [...state.moves],
+    undoPointer: state.undoPointer,
   }
+}
+
+// 5. Undo / Redo
+
+function replayMoves(state: GameState, targetPointer: number): void {
+  const fullMoves = [...state.moves]
+  const size = state.size
+
+  // Reset board and state to initial
+  state.board = createBoard(size)
+  state.captures = { [BLACK]: 0, [WHITE]: 0 }
+  state.history = []
+  state.currentPlayer = BLACK
+  state.consecutivePasses = 0
+  state.gameOver = false
+  state.moveCount = 0
+  state.lastMove = null
+  state.moves = [] // temporarily empty — placeStone/pass will append here
+
+  for (let i = 0; i < targetPointer; i++) {
+    const m = fullMoves[i]!
+    if (state.gameOver) break
+    if (m.r === null || m.c === null) {
+      pass(state)
+    } else {
+      placeStone(state, m.r, m.c)
+    }
+  }
+
+  // Restore the full moves list and pointer
+  state.moves = fullMoves
+  state.undoPointer = targetPointer
+}
+
+export function canUndo(state: GameState): boolean {
+  return state.undoPointer > 0 && !state.gameOver
+}
+
+export function undo(state: GameState): boolean {
+  if (state.undoPointer <= 0 || state.gameOver) return false
+  replayMoves(state, state.undoPointer - 1)
+  return true
+}
+
+export function canRedo(state: GameState): boolean {
+  return state.undoPointer < state.moves.length && !state.gameOver
+}
+
+export function redo(state: GameState): boolean {
+  if (state.undoPointer >= state.moves.length || state.gameOver) return false
+  replayMoves(state, state.undoPointer + 1)
+  return true
+}
+
+export function undoMultiple(state: GameState, n: number): number {
+  let undone = 0
+  for (let i = 0; i < n; i++) {
+    if (!undo(state)) break
+    undone++
+  }
+  return undone
 }
 
 export function getLegalMoves(state: GameState, color: Cell): [number, number][] {
