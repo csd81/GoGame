@@ -13,6 +13,12 @@ export const WHITE = 2 as const
 export type Cell = typeof EMPTY | typeof BLACK | typeof WHITE
 export type Board = Cell[][]
 
+export interface MoveRecord {
+  color: typeof BLACK | typeof WHITE
+  r: number | null
+  c: number | null
+}
+
 export interface GameState {
   size: number
   board: Board
@@ -23,6 +29,7 @@ export interface GameState {
   gameOver: boolean
   moveCount: number
   lastMove: { r: number; c: number } | null
+  moves: MoveRecord[]
 }
 
 export interface MoveResult {
@@ -149,6 +156,7 @@ export function isValidMoveForColor(state: GameState, r: number, c: number, colo
 export function placeStone(state: GameState, r: number, c: number): boolean {
   const result = isValidMove(state, r, c)
   if (!result.valid || !result.newBoard) return false
+  state.moves.push({ color: state.currentPlayer, r, c })
   state.board = result.newBoard
   state.history.push(boardKey(state.board))
   state.captures[state.currentPlayer] += result.captured!
@@ -160,6 +168,7 @@ export function placeStone(state: GameState, r: number, c: number): boolean {
 }
 
 export function pass(state: GameState): void {
+  state.moves.push({ color: state.currentPlayer, r: null, c: null })
   state.consecutivePasses++
   state.history.push(boardKey(state.board))
   state.currentPlayer = state.currentPlayer === BLACK ? WHITE : BLACK
@@ -183,6 +192,7 @@ export function createInitialState(size: number = 19): GameState {
     gameOver: false,
     moveCount: 0,
     lastMove: null,
+    moves: [],
   }
 }
 
@@ -197,6 +207,7 @@ export function copyState(state: GameState): GameState {
     gameOver: state.gameOver,
     moveCount: state.moveCount,
     lastMove: state.lastMove ? { r: state.lastMove.r, c: state.lastMove.c } : null,
+    moves: [...state.moves],
   }
 }
 

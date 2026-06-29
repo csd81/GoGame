@@ -10,6 +10,7 @@ import {
 import type { GameState, Cell } from "../engine.ts"
 import { setBotDeps, createRandomBot, createGreedyBot, createHeuristicBot, createMCTSBot } from "../bots.ts"
 import type { Bot } from "../bots.ts"
+import { exportSGF, importSGF } from "../sgf.ts"
 
 setBotDeps(getNeighbors, findGroup, countLiberties, isValidMoveForColor)
 
@@ -252,6 +253,59 @@ export function doResign(): void {
   showGameOver()
 }
 
+export function doSGFExport(): void {
+  const sgfStr = exportSGF(S.game, {
+    playerBlack: S.playerColor === BLACK ? "Human" : "AI (Level " + S.level + ")",
+    playerWhite: S.playerColor === WHITE ? "Human" : "AI (Level " + S.level + ")",
+    komi: 6.5,
+  })
+  const blob = new Blob([sgfStr], { type: "text/plain" })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = "ancient-go-" + Date.now() + ".sgf"
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+export function doSGFImport(this: HTMLInputElement): void {
+  const file = this.files?.[0]
+  if (!file) return
+  const reader = new FileReader()
+  reader.onload = () => {
+    const text = reader.result as string
+    const result = importSGF(text)
+    if (!result) {
+      alert("Invalid SGF file or not a Go game.")
+      return
+    }
+    S.game = result.state
+    S.size = result.state.size
+    S.busy = false
+    $overlay.classList.remove("active")
+    if (grid.length !== S.size) {
+      buildGrid(S.size)
+    } else {
+      for (let r = 0; r < S.size; r++) {
+        for (let c = 0; c < S.size; c++) {
+          const stone = grid[r]?.[c]?.querySelector(".stone")
+          if (stone) stone.remove()
+        }
+      }
+    }
+    $sizeSelect.value = String(S.size)
+    updateGhostColor()
+    render()
+    if (result.warnings.length > 0) {
+      console.warn("SGF import warnings:", result.warnings)
+    }
+    setTimeout(() => scheduleBotMove(), 200)
+  }
+  reader.readAsText(file)
+  // Reset so the same file can be re-selected
+  this.value = ""
+}
+
 export function newGame(): void {
   S.game = createInitialState(S.size)
   S.bot = BOT_FACTORIES[S.level]?.() ?? null
@@ -316,6 +370,11 @@ export function setupTestDOM(): void {
     '    <button id="pass-btn">Pass (P)</button>',
     '    <button id="resign-btn">Resign (R)</button>',
     '  </div>',
+    '  <div class="control-group sgf-group">',
+    '    <button id="sgf-export-btn">Download SGF</button>',
+    '    <button id="sgf-import-btn">Import SGF</button>',
+    '    <input type="file" id="sgf-file-input" accept=".sgf" style="display:none">',
+    '  </div>',
     '  <div id="status"></div>',
     '</div>',
     '<div id="board-wrapper">',
@@ -376,6 +435,11 @@ if (typeof document !== "undefined") {
   document.getElementById("pass-btn")!.addEventListener("click", doPass)
   document.getElementById("resign-btn")!.addEventListener("click", doResign)
   document.getElementById("new-game-btn")!.addEventListener("click", newGame)
+  document.getElementById("sgf-export-btn")!.addEventListener("click", doSGFExport)
+  document.getElementById("sgf-import-btn")!.addEventListener("click", () => {
+    document.getElementById("sgf-file-input")!.click()
+  })
+  document.getElementById("sgf-file-input")!.addEventListener("change", doSGFImport)
 
   $sizeSelect.addEventListener("change", () => { S.size = parseInt($sizeSelect.value); newGame() })
   $levelSelect.addEventListener("change", () => {

@@ -9,6 +9,7 @@ import {
 } from "../../engine.ts"
 import { renderBoard, renderStatus, parseCoord, printUI, showResult } from "../../render.ts"
 import { setBotDeps, createRandomBot, createGreedyBot } from "../../bots.ts"
+import { exportSGF, importSGF } from "../../sgf.ts"
 
 // Wire up bot deps
 setBotDeps(getNeighbors, findGroup, countLiberties, isValidMoveForColor)
@@ -70,6 +71,30 @@ describe("Engine + Bots integration", () => {
 })
 
 describe("Full pipeline: Engine + Render + Bots", () => {
+  it("SGF round-trip: play 30 moves, export, import matches board", () => {
+    const alice = createRandomBot()
+    const bob = createGreedyBot()
+    const s = createInitialState(7)
+    while (s.moveCount < 30 && !s.gameOver) {
+      const bot = s.currentPlayer === BLACK ? alice : bob
+      const move = bot.selectMove(s, s.currentPlayer)
+      if (move === null) { pass(s); continue }
+      placeStone(s, move.r, move.c)
+    }
+    const sgf = exportSGF(s)
+    const result = importSGF(sgf)
+    expect(result).not.toBeNull()
+    // Compare board state
+    for (let r = 0; r < s.size; r++) {
+      for (let c = 0; c < s.size; c++) {
+        expect(result!.state.board[r][c]).toBe(s.board[r][c])
+      }
+    }
+    expect(result!.state.captures[BLACK]).toBe(s.captures[BLACK])
+    expect(result!.state.captures[WHITE]).toBe(s.captures[WHITE])
+    expect(result!.state.moves.length).toBe(s.moves.length)
+  })
+
   it("Alice vs Bob (Random vs Greedy) plays without error", () => {
     const alice = createRandomBot()
     const bob = createGreedyBot()

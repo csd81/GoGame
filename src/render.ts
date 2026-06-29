@@ -198,6 +198,9 @@ export function showHelp(): void {
   console.log("  <col><row>   Place a stone, e.g. A1, D4, K10")
   console.log("  pass         Pass your turn")
   console.log("  resign       Resign the game")
+  console.log("  export       Save game to SGF file")
+  console.log("  import       Load game from SGF file")
+  console.log("  sgf          Print SGF to console")
   console.log("  help         Show this help")
   console.log("  quit         Exit")
 }

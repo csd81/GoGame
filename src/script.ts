@@ -6,6 +6,7 @@ import { renderBoard, renderStatus, printUI, showHelp, showResult, parseCoord } 
 import { createRandomBot, createGreedyBot, createHeuristicBot, createMCTSBot, setBotDeps } from "./bots.ts"
 import type { Bot } from "./bots.ts"
 import { getNeighbors, findGroup, countLiberties, isValidMoveForColor } from "./engine.ts"
+import { exportSGF, importSGF, formatSGF } from "./sgf.ts"
 
 // Wire up bot dependencies
 setBotDeps(getNeighbors, findGroup, countLiberties, isValidMoveForColor)
@@ -85,12 +86,49 @@ async function main(): Promise<void> {
     if (s.gameOver) { showResult(s); rli.close(); process.exit(0) }
   }
   
-  rl.on("line", (line: string) => {
+  rl.on("line", async (line: string) => {
     if (awaitingSize || awaitingAiSetup || awaitingAiDifficulty || waitingForAiColor) return
     if (!state) return
     const cmd = line.trim().toLowerCase()
     if (cmd === "quit" || cmd === "exit") { console.log("Goodbye!"); rl.close(); process.exit(0) }
     if (cmd === "help") { showHelp(); printUI(state); return }
+    if (cmd === "sgf") {
+      console.log(formatSGF(exportSGF(state, { playerBlack: humanColor === BLACK ? "Human" : "AI", playerWhite: humanColor === WHITE ? "Human" : "AI" })))
+      return
+    }
+    if (cmd.startsWith("export")) {
+      const parts2 = cmd.split(/\s+/)
+      const filename = parts2[1] ? parts2[1] + (parts2[1].endsWith(".sgf") ? "" : ".sgf") : "game-" + Date.now() + ".sgf"
+      const sgfStr = exportSGF(state, { playerBlack: humanColor === BLACK ? "Human" : "AI", playerWhite: humanColor === WHITE ? "Human" : "AI" })
+      try {
+        Bun.write(filename, sgfStr)
+        console.log("  [OK] Exported to " + filename)
+      } catch {
+        console.log("  [X] Failed to write " + filename)
+      }
+      return
+    }
+    if (cmd.startsWith("import ")) {
+      const filename = cmd.slice(7).trim()
+      try {
+        const content = Bun.file(filename)
+        const text = await content.text()
+        const result = importSGF(text)
+        if (!result) {
+          console.log("  [X] Invalid SGF file or not a Go game.")
+          return
+        }
+        state = result.state
+        console.log("  [OK] Loaded game from " + filename + " (" + state.moves.length + " moves)")
+        if (result.warnings.length > 0) {
+          for (const w of result.warnings) console.log("  [W] " + w)
+        }
+        printUI(state)
+      } catch {
+        console.log("  [X] Could not read " + filename)
+      }
+      return
+    }
     if (cmd === "pass") {
       pass(state)
       if (state.gameOver) { printUI(state); showResult(state); rl.close(); process.exit(0) }

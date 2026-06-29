@@ -118,6 +118,7 @@ function placeStone(state, r, c) {
   const result = isValidMove(state, r, c);
   if (!result.valid || !result.newBoard)
     return false;
+  state.moves.push({ color: state.currentPlayer, r, c });
   state.board = result.newBoard;
   state.history.push(boardKey(state.board));
   state.captures[state.currentPlayer] += result.captured;
@@ -128,6 +129,7 @@ function placeStone(state, r, c) {
   return true;
 }
 function pass(state) {
+  state.moves.push({ color: state.currentPlayer, r: null, c: null });
   state.consecutivePasses++;
   state.history.push(boardKey(state.board));
   state.currentPlayer = state.currentPlayer === BLACK ? WHITE : BLACK;
@@ -149,7 +151,8 @@ function createInitialState(size = 19) {
     consecutivePasses: 0,
     gameOver: false,
     moveCount: 0,
-    lastMove: null
+    lastMove: null,
+    moves: []
   };
 }
 function copyState(state) {
@@ -162,7 +165,8 @@ function copyState(state) {
     consecutivePasses: state.consecutivePasses,
     gameOver: state.gameOver,
     moveCount: state.moveCount,
-    lastMove: state.lastMove ? { r: state.lastMove.r, c: state.lastMove.c } : null
+    lastMove: state.lastMove ? { r: state.lastMove.r, c: state.lastMove.c } : null,
+    moves: [...state.moves]
   };
 }
 function countScore(state) {
@@ -590,6 +594,272 @@ function createMCTSBot(budgetOverride) {
   };
 }
 
+// src/sgf.ts
+function toSgfCoord(r, c) {
+  return String.fromCharCode(97 + c) + String.fromCharCode(97 + r);
+}
+function fromSgfCoord(s) {
+  if (s.length < 2)
+    return null;
+  const c = s.charCodeAt(0) - 97;
+  const r = s.charCodeAt(1) - 97;
+  if (r < 0 || c < 0)
+    return null;
+  return [r, c];
+}
+var NAME_DEFAULTS = {
+  black: "Black",
+  white: "White"
+};
+function formatResult(state) {
+  if (state.gameOver && state.consecutivePasses >= 2) {
+    const { blackScore, whiteScore } = scoreForSGF(state);
+    const diff = Math.abs(blackScore - whiteScore);
+    const diffStr = diff === Math.floor(diff) ? String(diff) : diff.toFixed(1);
+    if (blackScore > whiteScore)
+      return "B+" + diffStr;
+    if (whiteScore > blackScore)
+      return "W+" + diffStr;
+    return "0";
+  }
+  if (state.gameOver) {
+    const winner = state.currentPlayer === BLACK ? WHITE : BLACK;
+    return winner === BLACK ? "B+R" : "W+R";
+  }
+  return "";
+}
+function scoreForSGF(state) {
+  const { board, size, captures } = state;
+  const territory = { [BLACK]: 0, [WHITE]: 0 };
+  const visited = new Set;
+  for (let r = 0;r < size; r++) {
+    for (let c = 0;c < size; c++) {
+      if (board[r][c] === EMPTY && !visited.has(r * size + c)) {
+        const borders = new Set;
+        const stack = [[r, c]];
+        const regionVisited = new Set;
+        while (stack.length > 0) {
+          const [cr, cc] = stack.pop();
+          const key = cr * size + cc;
+          if (regionVisited.has(key))
+            continue;
+          regionVisited.add(key);
+          visited.add(key);
+          for (const [nr, nc] of getNeighbors(cr, cc, size)) {
+            if (board[nr][nc] === EMPTY) {
+              if (!regionVisited.has(nr * size + nc))
+                stack.push([nr, nc]);
+            } else {
+              borders.add(board[nr][nc]);
+            }
+          }
+        }
+        if (borders.size === 1) {
+          const owner = [...borders][0];
+          territory[owner] += regionVisited.size;
+        }
+      }
+    }
+  }
+  return {
+    blackScore: territory[BLACK] + captures[BLACK],
+    whiteScore: territory[WHITE] + captures[WHITE] + 6.5
+  };
+}
+function exportSGF(state, meta) {
+  const pb = meta?.playerBlack ?? NAME_DEFAULTS.black;
+  const pw = meta?.playerWhite ?? NAME_DEFAULTS.white;
+  const dt = meta?.date ?? "";
+  const ev = meta?.eventName ?? "";
+  const km = meta?.komi ?? 6.5;
+  const re = meta?.result ?? formatResult(state);
+  const parts = [];
+  parts.push("(;GM[1]FF[4]SZ[" + state.size + "]KM[" + km + "]");
+  if (re)
+    parts.push("RE[" + re + "]");
+  parts.push("PB[" + pb + "]");
+  parts.push("PW[" + pw + "]");
+  if (dt)
+    parts.push("DT[" + dt + "]");
+  if (ev)
+    parts.push("EV[" + ev + "]");
+  for (const move of state.moves) {
+    const color = move.color === BLACK ? "B" : "W";
+    if (move.r === null || move.c === null) {
+      parts.push(";" + color + "[]");
+    } else {
+      parts.push(";" + color + "[" + toSgfCoord(move.r, move.c) + "]");
+    }
+  }
+  parts.push(")");
+  return parts.join("");
+}
+function sgfEscape(s) {
+  return s.replace(/\\\]/g, "]").replace(/\\\\/g, "\\").replace(/\\n/g, `
+`);
+}
+function parseSGFProperties(nodeStr) {
+  const props = [];
+  const re = /([A-Z]+)((?:\[[^\]]*\])+)/g;
+  let match;
+  while ((match = re.exec(nodeStr)) !== null) {
+    const key = match[1];
+    const valuesStr = match[2];
+    const values = [];
+    const valRe = /\[([^\]]*)\]/g;
+    let vm;
+    while ((vm = valRe.exec(valuesStr)) !== null) {
+      values.push(sgfEscape(vm[1]));
+    }
+    props.push({ key, values });
+  }
+  return props;
+}
+function splitSGFNodes(sgf) {
+  let inner = sgf.trim();
+  if (inner.startsWith("(;"))
+    inner = inner.slice(2);
+  else if (inner.startsWith("("))
+    inner = inner.slice(1);
+  if (inner.endsWith(")"))
+    inner = inner.slice(0, -1);
+  const nodes = [];
+  let current = "";
+  let depth = 0;
+  let escape = false;
+  for (const ch of inner) {
+    if (escape) {
+      current += ch;
+      escape = false;
+      continue;
+    }
+    if (ch === "\\" && depth > 0) {
+      current += ch;
+      escape = true;
+      continue;
+    }
+    if (ch === "[" && depth === 0) {
+      current += ch;
+      depth = 1;
+    } else if (ch === "[" && depth > 0) {
+      current += ch;
+      depth++;
+    } else if (ch === "]" && depth > 0) {
+      current += ch;
+      depth--;
+    } else if (ch === ";" && depth === 0) {
+      if (current.trim())
+        nodes.push(current.trim());
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim())
+    nodes.push(current.trim());
+  return nodes;
+}
+function importSGF(sgf) {
+  try {
+    const normalized = sgf.replace(/\s+/g, " ").trim();
+    if (!normalized.startsWith("(") || !normalized.endsWith(")")) {
+      return null;
+    }
+    const nodeStrs = splitSGFNodes(normalized);
+    if (nodeStrs.length === 0)
+      return null;
+    const rootProps = parseSGFProperties(nodeStrs[0]);
+    const getProp = (key) => {
+      const p = rootProps.find((prop) => prop.key === key);
+      return p ? p.values : null;
+    };
+    const gm = getProp("GM");
+    if (gm !== null && gm[0] !== "1")
+      return null;
+    const szVal = getProp("SZ");
+    const size = szVal ? parseInt(szVal[0], 10) : 19;
+    if (size < 1 || size > 52)
+      return null;
+    const kmVal = getProp("KM");
+    const komi = kmVal ? parseFloat(kmVal[0]) : 6.5;
+    const pbVal = getProp("PB");
+    const pwVal = getProp("PW");
+    const dtVal = getProp("DT");
+    const evVal = getProp("EV");
+    const reVal = getProp("RE");
+    const state = createInitialState(size);
+    const abStones = getProp("AB") ?? [];
+    const awStones = getProp("AW") ?? [];
+    for (const coord of abStones) {
+      const parsed = fromSgfCoord(coord);
+      if (parsed) {
+        const [r, c] = parsed;
+        if (r >= 0 && r < size && c >= 0 && c < size && state.board[r][c] === EMPTY) {
+          state.board[r][c] = BLACK;
+        }
+      }
+    }
+    for (const coord of awStones) {
+      const parsed = fromSgfCoord(coord);
+      if (parsed) {
+        const [r, c] = parsed;
+        if (r >= 0 && r < size && c >= 0 && c < size && state.board[r][c] === EMPTY) {
+          state.board[r][c] = WHITE;
+        }
+      }
+    }
+    state.moves = [];
+    const warnings = [];
+    for (let i = 1;i < nodeStrs.length; i++) {
+      const props = parseSGFProperties(nodeStrs[i]);
+      for (const prop of props) {
+        if (prop.key === "B" || prop.key === "W") {
+          const coordStr = prop.values[0] ?? "";
+          if (coordStr === "") {
+            pass(state);
+          } else {
+            const parsed = fromSgfCoord(coordStr);
+            if (!parsed) {
+              warnings.push("Invalid coordinate at move " + state.moveCount + ": " + coordStr);
+              pass(state);
+            } else {
+              const [r, c] = parsed;
+              if (r < 0 || r >= size || c < 0 || c >= size) {
+                warnings.push("Out-of-bounds coordinate at move " + state.moveCount + ": " + coordStr);
+                pass(state);
+              } else {
+                const ok = placeStone(state, r, c);
+                if (!ok) {
+                  warnings.push("Illegal move at " + coordStr + " (move " + state.moveCount + "), treating as pass");
+                  pass(state);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    const meta = {
+      playerBlack: pbVal?.[0] ?? NAME_DEFAULTS.black,
+      playerWhite: pwVal?.[0] ?? NAME_DEFAULTS.white,
+      date: dtVal?.[0] ?? "",
+      eventName: evVal?.[0] ?? "",
+      komi,
+      result: ""
+    };
+    if (reVal && reVal[0]) {
+      const re = reVal[0];
+      meta.result = re;
+      if (re.includes("R") || re === "0" || re.includes("+")) {
+        state.gameOver = true;
+      }
+    }
+    return { state, meta, warnings };
+  } catch {
+    return null;
+  }
+}
+
 // src/web/app.ts
 setBotDeps(getNeighbors, findGroup, countLiberties, isValidMoveForColor);
 var BOT_FACTORIES = {
@@ -803,6 +1073,58 @@ function doResign() {
   render();
   showGameOver();
 }
+function doSGFExport() {
+  const sgfStr = exportSGF(S.game, {
+    playerBlack: S.playerColor === BLACK ? "Human" : "AI (Level " + S.level + ")",
+    playerWhite: S.playerColor === WHITE ? "Human" : "AI (Level " + S.level + ")",
+    komi: 6.5
+  });
+  const blob = new Blob([sgfStr], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "ancient-go-" + Date.now() + ".sgf";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+function doSGFImport() {
+  const file = this.files?.[0];
+  if (!file)
+    return;
+  const reader = new FileReader;
+  reader.onload = () => {
+    const text = reader.result;
+    const result = importSGF(text);
+    if (!result) {
+      alert("Invalid SGF file or not a Go game.");
+      return;
+    }
+    S.game = result.state;
+    S.size = result.state.size;
+    S.busy = false;
+    $overlay.classList.remove("active");
+    if (grid.length !== S.size) {
+      buildGrid(S.size);
+    } else {
+      for (let r = 0;r < S.size; r++) {
+        for (let c = 0;c < S.size; c++) {
+          const stone = grid[r]?.[c]?.querySelector(".stone");
+          if (stone)
+            stone.remove();
+        }
+      }
+    }
+    $sizeSelect.value = String(S.size);
+    updateGhostColor();
+    render();
+    if (result.warnings.length > 0) {
+      console.warn("SGF import warnings:", result.warnings);
+    }
+    setTimeout(() => scheduleBotMove(), 200);
+  };
+  reader.readAsText(file);
+  this.value = "";
+}
 function newGame() {
   S.game = createInitialState(S.size);
   S.bot = BOT_FACTORIES[S.level]?.() ?? null;
@@ -862,6 +1184,11 @@ function setupTestDOM() {
     '    <button id="pass-btn">Pass (P)</button>',
     '    <button id="resign-btn">Resign (R)</button>',
     "  </div>",
+    '  <div class="control-group sgf-group">',
+    '    <button id="sgf-export-btn">Download SGF</button>',
+    '    <button id="sgf-import-btn">Import SGF</button>',
+    '    <input type="file" id="sgf-file-input" accept=".sgf" style="display:none">',
+    "  </div>",
     '  <div id="status"></div>',
     "</div>",
     '<div id="board-wrapper">',
@@ -913,6 +1240,11 @@ if (typeof document !== "undefined") {
     document.getElementById("pass-btn").addEventListener("click", doPass);
     document.getElementById("resign-btn").addEventListener("click", doResign);
     document.getElementById("new-game-btn").addEventListener("click", newGame);
+    document.getElementById("sgf-export-btn").addEventListener("click", doSGFExport);
+    document.getElementById("sgf-import-btn").addEventListener("click", () => {
+      document.getElementById("sgf-file-input").click();
+    });
+    document.getElementById("sgf-file-input").addEventListener("change", doSGFImport);
     $sizeSelect.addEventListener("change", () => {
       S.size = parseInt($sizeSelect.value);
       newGame();
@@ -955,6 +1287,8 @@ export {
   isStarPoint2 as isStarPoint,
   grid,
   getActiveBot,
+  doSGFImport,
+  doSGFExport,
   doResign,
   doPass,
   buildGrid,

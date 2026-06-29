@@ -11,6 +11,7 @@ import {
 } from "../../engine.ts"
 import { parseCoord, renderBoard, renderStatus } from "../../render.ts"
 import { setBotDeps, createRandomBot, createGreedyBot } from "../../bots.ts"
+import { exportSGF, importSGF } from "../../sgf.ts"
 import {
   getNeighbors as gn, findGroup as fg,
   countLiberties as cl, isValidMoveForColor as ivmfc,
@@ -191,5 +192,39 @@ describe("Multiple passes and resign — adversarial", () => {
     expect(s.gameOver).toBe(true)
     pass(s)  // should not crash
     expect(s.gameOver).toBe(true)
+  })
+})
+
+describe("SGF — edge cases", () => {
+  it("import empty/whitespace string returns null", () => {
+    expect(importSGF("")).toBeNull()
+    expect(importSGF("   ")).toBeNull()
+  })
+  it("import SGF with backslash-escaped brackets", () => {
+    // SGF escaping: \] inside brackets
+    const sgf = '(;GM[1]FF[4]SZ[9]C[escaped \\[bracket\\]];B[dd])'
+    const result = importSGF(sgf)
+    expect(result).not.toBeNull()
+    expect(result!.state.moves.length).toBe(1)
+  })
+  it("import SGF with missing SZ defaults to 19", () => {
+    const sgf = "(;GM[1]FF[4]KM[6.5];B[dd])"
+    const result = importSGF(sgf)
+    expect(result).not.toBeNull()
+    expect(result!.state.size).toBe(19)
+  })
+  it("export->import on a resigned game", () => {
+    const s = createInitialState(9)
+    placeStone(s, 4, 4)
+    resign(s)
+    const sgf = exportSGF(s)
+    const result = importSGF(sgf)
+    expect(result).not.toBeNull()
+    // After resign, the game is over
+    expect(result!.state.gameOver).toBe(true)
+  })
+  it("import non-Go SGF returns null", () => {
+    expect(importSGF("(;GM[2]FF[4])")).toBeNull()
+    expect(importSGF("not sgf")).toBeNull()
   })
 })
