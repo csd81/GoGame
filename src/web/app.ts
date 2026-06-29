@@ -23,14 +23,14 @@ interface AppState {
   busy: boolean
 }
 
-const BOT_FACTORIES: Record<number, () => Bot> = {
+export const BOT_FACTORIES: Record<number, () => Bot> = {
   1: createRandomBot,
   2: createGreedyBot,
   3: createHeuristicBot,
   4: createMCTSBot,
 }
 
-const S: AppState = {
+export const S: AppState = {
   game: createInitialState(9),
   bot: null,
   playerColor: BLACK,
@@ -39,15 +39,15 @@ const S: AppState = {
   busy: false,
 }
 
-let $board: HTMLElement
-let $status: HTMLElement
-let $overlay: HTMLElement
-let $modalTitle: HTMLElement
-let $modalScores: HTMLElement
-let grid: HTMLElement[][] = []
-let $sizeSelect: HTMLSelectElement
-let $levelSelect: HTMLSelectElement
-let $colorSelect: HTMLSelectElement
+export let $board: HTMLElement
+export let $status: HTMLElement
+export let $overlay: HTMLElement
+export let $modalTitle: HTMLElement
+export let $modalScores: HTMLElement
+export let grid: HTMLElement[][] = []
+export let $sizeSelect: HTMLSelectElement
+export let $levelSelect: HTMLSelectElement
+export let $colorSelect: HTMLSelectElement
 
 export function stoneSymbol(color: Cell): string {
   return color === BLACK ? "\u25CF" : "\u25CB"
@@ -481,9 +481,6 @@ export function teardownTestDOM(): void {
   S.busy = false
   grid = []
 }
-
-// Exports for testing
-export { S, grid, BOT_FACTORIES, $board, $status, $overlay, $modalTitle, $modalScores, $sizeSelect, $levelSelect, $colorSelect }
 
 // Auto-boot in browser (guarded for test environments using happy-dom)
 if (typeof document !== "undefined") {

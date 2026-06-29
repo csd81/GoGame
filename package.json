@@ -6,9 +6,9 @@
   "scripts": {
     "start": "bun run script.ts",
     "dev": "bun x serve src/web -l 8080 --no-clipboard",
-    "dev:watch": "bun build src/web/app.ts --outfile=src/web/bundle.js --target=browser --watch",
+    "dev:watch": "bun build src/web/app.ts --outfile=src/web/bundle.js --target=browser --format=esm --watch",
     "typecheck": "bun x tsc --noEmit",
-    "build:web": "bun build src/web/app.ts --outfile=src/web/bundle.js --target=browser"
+    "build:web": "bun build src/web/app.ts --outfile=src/web/bundle.js --target=browser --format=esm"
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "^20.10.6",
