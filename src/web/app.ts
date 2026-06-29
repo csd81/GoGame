@@ -4,7 +4,7 @@
  */
 import {
   EMPTY, BLACK, WHITE, createInitialState, placeStone, pass, resign,
-  countScore, isValidMove, getNeighbors, findGroup, countLiberties,
+  countScore, computeTerritoryMap, isValidMove, getNeighbors, findGroup, countLiberties,
   isValidMoveForColor, undo, redo, canUndo, canRedo, undoMultiple,
 } from "../engine.ts"
 import type { GameState, Cell } from "../engine.ts"
@@ -147,6 +147,14 @@ export function renderStatus(): void {
   html += '<div class="turn-label">' + (isBot ? "AI thinking..." : "Your turn") + " \u2014 " + curSymbol + " " + curName + "</div>"
   html += '<div class="captures">Captures  ' + bSymbol + " " + game.captures[BLACK] + "  " + wSymbol + " " + game.captures[WHITE] + "</div>"
 
+  // Live score estimate
+  const score = countScore(game)
+  const diff = score.blackScore - score.whiteScore
+  const diffStr = diff >= 0
+    ? "B+" + (diff === Math.floor(diff) ? String(diff) : diff.toFixed(1))
+    : "W+" + (Math.abs(diff) === Math.floor(Math.abs(diff)) ? String(Math.abs(diff)) : Math.abs(diff).toFixed(1))
+  html += '<div class="score-line">Score  ' + bSymbol + " " + score.blackScore.toFixed(1) + " | " + wSymbol + " " + score.whiteScore.toFixed(1) + " (" + diffStr + ")</div>"
+
   if (game.consecutivePasses > 0) {
     html += '<div class="captures">Passes ' + game.consecutivePasses + "/2</div>"
   }
@@ -176,8 +184,30 @@ export function showGameOver(): void {
   $overlay.classList.add("active")
 }
 
+export function renderTerritory(): void {
+  const { size } = S.game
+  const map = computeTerritoryMap(S.game)
+
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      const cell = grid[r]?.[c]
+      if (!cell) continue
+
+      const existing = cell.querySelector(".territory-overlay")
+      if (existing) existing.remove()
+
+      if (map[r][c] === EMPTY) continue
+
+      const overlay = document.createElement("div")
+      overlay.className = "territory-overlay " + (map[r][c] === BLACK ? "territory-black" : "territory-white")
+      cell.appendChild(overlay)
+    }
+  }
+}
+
 export function render(): void {
   renderStones()
+  renderTerritory()
   renderStatus()
 }
 

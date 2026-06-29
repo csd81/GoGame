@@ -254,6 +254,25 @@ body {
   box-shadow: 1px 2px 4px rgba(0,0,0,0.2);
 }
 
+/* ── Territory Overlay ──────────────────────────────── */
+.territory-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  pointer-events: none;
+}
+.territory-overlay.territory-black {
+  background: rgba(60, 60, 200, 0.13);
+}
+.territory-overlay.territory-white {
+  background: rgba(220, 220, 220, 0.20);
+}
+
+/* ── Score line in status ──────────────────────────── */
+.score-line { font-size: 13px; font-weight: 600; margin-top: 6px; color: var(--text); }
+
 /* Last move marker */
 .stone.last-move::after {
   content: '';

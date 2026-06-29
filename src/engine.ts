@@ -297,39 +297,70 @@ export function getLegalMoves(state: GameState, color: Cell): [number, number][]
   return moves
 }
 
-export function countScore(state: GameState): { blackScore: number; whiteScore: number } {
-  const { board, size, captures } = state
-  const territory: Record<number, number> = { [BLACK]: 0, [WHITE]: 0 }
+/**
+ * Compute a territory ownership map: each cell gets BLACK, WHITE, or EMPTY.
+ * Only empty cells can be territory; stone cells return EMPTY.
+ */
+export function computeTerritoryMap(state: GameState): Cell[][] {
+  const { board, size } = state
+  const map: Cell[][] = Array.from({ length: size }, () => Array<Cell>(size).fill(EMPTY))
   const visited = new Set<number>()
+
   for (let r = 0; r < size; r++) {
     for (let c = 0; c < size; c++) {
-      if (board[r][c] === EMPTY && !visited.has(r * size + c)) {
-        const borders = new Set<Cell>()
-        const stack: [number, number][] = [[r, c]]
-        const regionVisited = new Set<number>()
-        while (stack.length > 0) {
-          const [cr, cc] = stack.pop()!
-          const key = cr * size + cc
-          if (regionVisited.has(key)) continue
-          regionVisited.add(key)
-          visited.add(key)
-          for (const [nr, nc] of getNeighbors(cr, cc, size)) {
-            if (board[nr][nc] === EMPTY) {
-              if (!regionVisited.has(nr * size + nc)) stack.push([nr, nc])
-            } else {
-              borders.add(board[nr][nc])
-            }
+      if (board[r][c] !== EMPTY) continue
+      if (visited.has(r * size + c)) continue
+
+      // Flood-fill this contiguous empty region
+      const borders = new Set<Cell>()
+      const region: [number, number][] = []
+      const stack: [number, number][] = [[r, c]]
+      const regionVisited = new Set<number>()
+
+      while (stack.length > 0) {
+        const [cr, cc] = stack.pop()!
+        const key = cr * size + cc
+        if (regionVisited.has(key)) continue
+        regionVisited.add(key)
+        visited.add(key)
+        region.push([cr, cc])
+
+        for (const [nr, nc] of getNeighbors(cr, cc, size)) {
+          const nk = nr * size + nc
+          if (board[nr][nc] === EMPTY) {
+            if (!regionVisited.has(nk)) stack.push([nr, nc])
+          } else {
+            borders.add(board[nr][nc])
           }
         }
-        if (borders.size === 1) {
-          const owner = [...borders][0]!
-          territory[owner] += regionVisited.size
+      }
+
+      // If bordered by only one color, it's that player's territory
+      if (borders.size === 1) {
+        const owner = [...borders][0]!
+        for (const [cr, cc] of region) {
+          map[cr][cc] = owner
         }
       }
     }
   }
+
+  return map
+}
+
+export function countScore(state: GameState): { blackScore: number; whiteScore: number } {
+  const { size, captures } = state
+  const territoryMap = computeTerritoryMap(state)
+  let blackTerritory = 0
+  let whiteTerritory = 0
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      if (territoryMap[r][c] === BLACK) blackTerritory++
+      else if (territoryMap[r][c] === WHITE) whiteTerritory++
+    }
+  }
   return {
-    blackScore: territory[BLACK] + captures[BLACK],
-    whiteScore: territory[WHITE] + captures[WHITE] + 6.5,
+    blackScore: blackTerritory + captures[BLACK],
+    whiteScore: whiteTerritory + captures[WHITE] + 6.5,
   }
 }

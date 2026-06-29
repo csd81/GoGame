@@ -9,7 +9,7 @@ import {
   isStarPoint,
   createInitialState,
   isValidMove, isValidMoveForColor, placeStone, pass, resign,
-  countScore, copyState, getLegalMoves,
+  countScore, computeTerritoryMap, copyState, getLegalMoves,
   undo, redo, canUndo, canRedo, undoMultiple,
 } from "../../engine.ts"
 
@@ -225,6 +225,84 @@ describe("countScore", () => {
     const score = countScore(s)
     expect(score.blackScore).toBe(3)
     expect(score.whiteScore).toBe(8.5)
+  })
+})
+
+describe("computeTerritoryMap", () => {
+  it("empty board has all EMPTY territory", () => {
+    const s = createInitialState(9)
+    const map = computeTerritoryMap(s)
+    for (let r = 0; r < 9; r++)
+      for (let c = 0; c < 9; c++)
+        expect(map[r][c]).toBe(EMPTY)
+  })
+
+  it("single stone claims adjacent territory", () => {
+    const s = createInitialState(9)
+    // Place a black stone at 4,4 — the empty region touching it should be black territory
+    // But on an otherwise empty board the whole board is one region bordered by nothing,
+    // so all cells will be EMPTY (no borders means neutral).
+    // Let's use a corner enclosure instead.
+    placeStone(s, 0, 0) // B at top-left
+    s.currentPlayer = WHITE
+    placeStone(s, 2, 2) // W elsewhere, to create a border
+    // Now the empty region near (0,0) is bordered only by B at (0,0)
+    // and the empty region near (2,2) is bordered only by W at (2,2)
+    // But (0,0) corner — neighbors are (0,1) and (1,0), both empty.
+    // Those empty cells border (0,0)=B and (0,1)=empty, (1,0)=empty.
+    // Since the region is just (0,1) and (1,0) + maybe more... the flood fill from
+    // (0,1) will go through all empty cells connected to (0,1) that don't have stones,
+    // and it will encounter W at (2,2) as a border, making it contested.
+    // Let's use a simpler scenario: 3-stone enclosure
+    const s2 = createInitialState(5)
+    s2.board[0][0] = BLACK; s2.board[0][1] = BLACK; s2.board[1][0] = BLACK
+    // Corner cell (0,0) is a stone, not territory
+    // Empty region: touching B at (0,1), B at (1,0) — but also touches nothing else
+    // Actually the empty cells (0,2), (1,1), (2,0) etc are connected in a chain
+    // since there are no other stones. They'll all be one big region.
+    // The borders will be {BLACK} only, so those cells become BLACK territory.
+    // But also the empty cells at (2,2), (3,3) etc are connected and also
+    // bordered only by BLACK (same B stones). So the whole board becomes B territory.
+    // That IS technically correct for this board.
+    const map = computeTerritoryMap(s2)
+    expect(map[0][1]).toBe(EMPTY) // stone cell
+    expect(map[1][0]).toBe(EMPTY) // stone cell
+    expect(map[1][1]).toBe(BLACK) // empty cell bordered by B only
+  })
+
+  it("neutral territory when region borders both colors", () => {
+    const s = createInitialState(5)
+    s.board[0][0] = BLACK
+    s.board[0][2] = WHITE
+    // Empty cell at (0,1) is between B and W — its region borders both
+    // But wait: the continuous empty region from (0,1) connects to (1,1), (1,0), etc.
+    // Those touch B at (0,0), (1,0?) — and W at (0,2), (1,2)? — depends on the board.
+    // Let's make it clearer: 3x3 with B at (0,0) and W at (2,2), nothing else.
+    // The whole board is one empty region. Borders: {B, W}. So all EMPTY. Correct.
+    const s2 = createInitialState(3)
+    s2.board[0][0] = BLACK
+    s2.board[2][2] = WHITE
+    const map = computeTerritoryMap(s2)
+    // All empty cells should be EMPTY (neutral, bordered by both)
+    expect(map[0][1]).toBe(EMPTY)
+    expect(map[1][1]).toBe(EMPTY)
+    expect(map[1][2]).toBe(EMPTY)
+    expect(map[2][0]).toBe(EMPTY)
+  })
+
+  it("territory correctly assigned after capture", () => {
+    const s = createInitialState(3)
+    // Set up: B at (0,0), B at (2,0), W at (1,0) with only 1 liberty at (1,1)
+    s.board[0][0] = BLACK
+    s.board[1][0] = WHITE
+    s.board[2][0] = BLACK
+    s.history.push(boardKey(s.board))
+    // Black plays (1,1), capturing W at (1,0)
+    placeStone(s, 1, 1)
+    // After capture: B at (0,0), B at (1,1), B at (2,0). (1,0) is empty
+    const map = computeTerritoryMap(s)
+    expect(map[1][0]).toBe(BLACK) // captured point is now empty black territory
+    expect(map[0][1]).toBe(BLACK) // adjacent empty cell also black territory
   })
 })
 

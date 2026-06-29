@@ -175,6 +175,20 @@ export function renderStatus(state: GameState, opts?: RenderOpts): string {
     s += "  |  Last: pass"
   }
 
+  // Live score estimate
+  const score = countScore(state)
+  const diff = score.blackScore - score.whiteScore
+  const diffStr = diff >= 0
+    ? "B+" + (diff === Math.floor(diff) ? String(diff) : diff.toFixed(1))
+    : "W+" + (Math.abs(diff) === Math.floor(Math.abs(diff)) ? String(Math.abs(diff)) : Math.abs(diff).toFixed(1))
+  const bSym = unicode ? UNICODE_CHARS.black : "B"
+  const wSym = unicode ? UNICODE_CHARS.white : "W"
+  if (color) s += "\n" + C.dim
+  else s += "\n"
+  s += "Score: " + bSym + " " + score.blackScore.toFixed(1) + " | " + wSym + " " + score.whiteScore.toFixed(1)
+  s += " (" + diffStr + ")"
+  if (color) s += C.rst
+
   return s
 }
 
